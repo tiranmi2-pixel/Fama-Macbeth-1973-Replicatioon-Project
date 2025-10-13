@@ -1,6 +1,7 @@
 
 
 
+
 # Table 1 — Portfolio formation, estimation, and testing periods
 fmt_span <- function(y1, y2) sprintf("%d–%02d", y1, y2 %% 100)
 
@@ -95,10 +96,14 @@ row_order <- c("Portfolio formation period",
                "No. of securities meeting data requirement")
 
 
-make_panel <- function(tbl, periods_vec, left_colname = " ", header_label = "PERIODS") {
+make_panel <- function(tbl, periods_vec,
+                       left_colname = " ",
+                       header_label = "PERIODS",
+                       show_period_numbers_in_row = FALSE) {
+  
   panel <- tbl %>%
-    filter(Period %in% periods_vec) %>%
-    pivot_longer(
+    dplyr::filter(Period %in% periods_vec) %>%
+    tidyr::pivot_longer(
       cols = c(
         `Portfolio formation period`,
         `Initial estimation period`,
@@ -111,35 +116,38 @@ make_panel <- function(tbl, periods_vec, left_colname = " ", header_label = "PER
       values_transform = list(Value = as.character),
       values_ptypes    = list(Value = character())
     ) %>%
-    mutate(
+    dplyr::mutate(
       Row    = factor(Row, levels = row_order),
       Period = factor(Period, levels = as.character(periods_vec))
     ) %>%
-    arrange(Row, Period) %>%
-    pivot_wider(names_from = Period, values_from = Value)
+    dplyr::arrange(Row, Period) %>%
+    tidyr::pivot_wider(names_from = Period, values_from = Value)
   
-  # set column names and prepend the header row
+  # set column names
   names(panel)[1]  <- left_colname
   names(panel)[-1] <- as.character(periods_vec)
   
-  header_vals <- c(header_label, as.character(periods_vec))
-  names(header_vals) <- names(panel)
+  # build header row 
+  header_right <- if (show_period_numbers_in_row) as.character(periods_vec)
+  else rep("", length(periods_vec))
+  header_vals  <- c(header_label, header_right)
   
-  bind_rows(as_tibble_row(header_vals), panel)
+  # as_tibble_row expects a named LIST
+  header_row <- tibble::as_tibble_row(setNames(as.list(header_vals), names(panel)))
+  
+  dplyr::bind_rows(header_row, panel)
 }
 
+
 # Table 1: Periods 1–5
-table1_panelA <- make_panel(table1_raw, 1:5)
-# Table 2: Periods 6–9
-table1_panelB <- make_panel(table1_raw, 6:9)
+table1_panelA <- make_panel(table1_raw, 1:5, show_period_numbers_in_row = TRUE)
+# Table 1: Periods 6–9
+table1_panelB <- make_panel(table1_raw, 6:9, show_period_numbers_in_row = TRUE)
 
 
 
 print(as.data.frame(table1_panelA), row.names = FALSE)
 print(as.data.frame(table1_panelB), row.names = FALSE)
-
-
-
 
 
 
