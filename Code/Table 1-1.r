@@ -1,5 +1,7 @@
 
-# Table 1 — Portfolio formation, estimation, and testing periods
+
+
+########## Table 1 — Portfolio formation, estimation, and testing periods
 fmt_span <- function(y1, y2) sprintf("%d–%02d", y1, y2 %% 100)
 
 # ---- 0) Ensure we have a monthly key and a clean return flag
