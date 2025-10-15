@@ -438,6 +438,7 @@ for (i in 1:nrow(periods_table3)) {
 
 table3_full <- bind_rows(table3_list)
 
+
 #======================================================
 # CREATE EXACT TABLE 3 FORMAT (21 columns per period)
 #======================================================
@@ -732,210 +733,45 @@ print_table3_paper(table3_formatted)
 
 
 #======================================================
-# Export to CSV (one file per panel, exact format)
+# Export to Excel with proper formatting 
 #======================================================
 
-export_table3_csv <- function(table3_full) {
-  
-  for (panel_letter in c("A", "B", "C", "D")) {
-    
-    # Filter the data for the specific panel
-    panel_data <- table3_full %>%
-      filter(Panel == panel_letter)
-    
-    # Ensure the t_g0_minus_rf column exists before selecting, adding it if necessary.
-    # This makes the function more robust.
-    if (!"t_g0_minus_rf" %in% names(panel_data)) {
-      panel_data <- panel_data %>% mutate(t_g0_minus_rf = NA_real_)
-    }
-    
-    # Select and rename columns for the final CSV output.
-    # This approach is cleaner and avoids the error.
-    panel_data_final <- panel_data %>%
-      select(
-        Period, 
-        Variable, 
-        mean, 
-        sd, 
-        t_stat, 
-        rho_m, 
-        rho_0, 
-        t_g0_minus_rf
-      ) %>%
-      rename(
-        `γ̂ⱼ` = mean,
-        `s(γ̂ⱼ)` = sd,
-        `t(γ̂ⱼ)` = t_stat,
-        `ρ̂ₘ(γ̂ⱼ)` = rho_m,
-        `ρ̂₀(γ̂ⱼ)` = rho_0,
-        `t(γ̂₀-Rf)` = t_g0_minus_rf
-      )
-    
-    filename <- paste0("Table3_Panel_", panel_letter, ".csv")
-    write.csv(panel_data_final, filename, row.names = FALSE, na = "")
-    cat("Exported", filename, "\n")
-  }
-}
+library(openxlsx)
+library(dplyr)
 
-# Run the corrected export function
-export_table3_csv(table3_full)
-
-cat("\n\nTable 3 replication complete!\n")
-#======================================================
-# Export to Excel with proper formatting (ALL 21 COLUMNS)
-#======================================================
-
-
-export_table3_excel <- function(table3_formatted) {
-  
-  wb <- createWorkbook()
-  
-  panel_titles <- c(
-    "A" = "Panel A: Rpt = γ0t + γ1t*βp + ηpt",
-    "B" = "Panel B: Rpt = γ0t + γ1t*βp + γ2t*βp² + ηpt",
-    "C" = "Panel C: Rpt = γ0t + γ1t*βp + γ3t*sp(εi) + ηpt",
-    "D" = "Panel D: Rpt = γ0t + γ1t*βp + γ2t*βp² + γ3t*sp(εi) + ηpt"
-  )
-  
-  for (panel_letter in c("A", "B", "C", "D")) {
-    
-    sheet_name <- paste0("Panel_", panel_letter)
-    addWorksheet(wb, sheet_name)
-    
-    current_row <- 1
-    
-    # Title
-    writeData(wb, sheet_name, panel_titles[panel_letter], startRow = current_row, startCol = 1)
-    mergeCells(wb, sheet_name, cols = 1:6, rows = current_row)
-    addStyle(wb, sheet_name, createStyle(fontSize = 14, textDecoration = "bold"), rows = current_row, cols = 1)
-    current_row <- current_row + 2
-    
-    # Helper to build and write a table block
-    write_excel_block <- function(data_block, period_labels) {
-      if (is.null(data_block) || nrow(data_block) == 0) {
-        writeData(wb, sheet_name, "No data for this period.", startRow = current_row)
-        current_row <<- current_row + 2
-        return()
-      }
-      
-      # Helper to safely get a value
-      get_value <- function(p, v, stat_col) {
-        val <- data_block %>%
-          filter(Period == p, Variable == v) %>%
-          pull(!!sym(stat_col))
-        # Return the value if it's a single finite number, otherwise NA
-        if (length(val) == 1 && is.finite(val)) {
-          return(val)
-        }
-        return(NA)
-      }
-      
-      # Build the entire table as a list of character vectors (rows)
-      all_rows_list <- list()
-      variables <- unique(data_block$Variable)
-      stat_names_in_order <- c("γ̂₀", "γ̂₁", "γ̂₂", "γ̂₃", "r̄²")
-      variables <- intersect(stat_names_in_order, variables) # Keep original order
-      
-      for (var in variables) {
-        # Define the stats to extract for the current variable
-        stats_to_get <- list(
-          "mean" = var,
-          "sd" = "s(γ̂ⱼ)",
-          "t_stat" = "t(γ̂ⱼ)",
-          "rho_m" = "ρ̂ₘ(γ̂ⱼ)",
-          "rho_0" = "ρ̂₀(γ̂ⱼ)"
-        )
-        if (var == "γ̂₀") {
-          stats_to_get$t_g0_minus_rf <- "t(γ̂₀-Rf)"
-        }
-        if (var == "r̄²") {
-          stats_to_get <- list("mean" = "r̄²")
-        }
-        
-        # Create a row for each statistic
-        for (stat_code in names(stats_to_get)) {
-          stat_name <- stats_to_get[[stat_code]]
-          new_row <- c(stat_name)
-          
-          for (p in period_labels) {
-            new_row <- c(new_row, get_value(p, var, stat_code))
-          }
-          all_rows_list <- append(all_rows_list, list(new_row))
-        }
-        # Add a blank row for spacing between variables
-        if (var != tail(variables, 1)) {
-          all_rows_list <- append(all_rows_list, list(rep(NA, length(period_labels) + 1)))
-        }
-      }
-      
-      # Convert the list of rows into a single data frame
-      final_table <- as.data.frame(do.call(rbind, all_rows_list), stringsAsFactors = FALSE)
-      names(final_table) <- c("Statistic", period_labels)
-      
-      # Convert numeric columns from character to numeric
-      for (col_idx in 2:ncol(final_table)) {
-        final_table[, col_idx] <- as.numeric(final_table[, col_idx])
-      }
-      
-      # Write the complete data frame to the Excel sheet
-      writeData(wb, sheet_name, final_table, startRow = current_row, colNames = TRUE)
-      
-      # Add some styling
-      header_style <- createStyle(textDecoration = "bold", border = "bottom")
-      addStyle(wb, sheet_name, header_style, rows = current_row, cols = 1:ncol(final_table), gridExpand = TRUE)
-      
-      current_row <<- current_row + nrow(final_table) + 2 # Update row counter for next block
-    }
-    
-    # PERIODS 1-5
-    periods_1_5 <- c("1935-6/68", "1935-45", "1946-55", "1956-6/68", "1935-40")
-    write_excel_block(table3_formatted[[paste0("Panel_", panel_letter, "_Periods_1_5")]], periods_1_5)
-    
-    # PERIODS 6-10
-    periods_6_10 <- c("1941-45", "1946-50", "1951-55", "1956-60", "1961-6/68")
-    write_excel_block(table3_formatted[[paste0("Panel_", panel_letter, "_Periods_6_10")]], periods_6_10)
-    
-    setColWidths(wb, sheet_name, cols = 1:12, widths = "auto")
-  }
-  
-  saveWorkbook(wb, "Table3_Fama_MacBeth_1973.xlsx", overwrite = TRUE)
-  cat("\nTable 3 exported to Table3_Fama_MacBeth_1973.xlsx\n")
-}
-
-export_table3_excel(table3_formatted)
-
-
-------------
-  library(openxlsx)
-
-export_table3_final_corrected <- function(table3_full) {
+export_table3_corrected <- function(table3_full) {
   
   wb <- createWorkbook()
   addWorksheet(wb, "Table 3")
   
   current_row <- 1
   
+  # Title
   writeData(wb, "Table 3", "TABLE 3", startRow = current_row, startCol = 1)
   addStyle(wb, "Table 3", 
            createStyle(fontSize = 16, textDecoration = "bold"), 
            rows = current_row, cols = 1)
   current_row <- current_row + 1
   
+  # Subtitle
   writeData(wb, "Table 3", 
             "Risk, Return, and Equilibrium: Empirical Tests", 
             startRow = current_row, startCol = 1)
   current_row <- current_row + 3
   
-  # EXACT order from your specification (21 columns total)
-  full_header <- c("Period",
-                   "γ̂₀", "γ̂₁", "γ̂₂", "γ̂₃",
-                   "t(γ̂₀-Rf)",
-                   "s(γ̂₀)", "s(γ̂₁)", "s(γ̂₂)", "s(γ̂₃)",
-                   "ρ̂₀(γ̂₀)", "ρ̂₀(γ̂₁)", "ρ̂₀(γ̂₂)", "ρ̂₀(γ̂₃)",
-                   "ρ̂ₘ(γ̂₀)", "ρ̂ₘ(γ̂₁)", "ρ̂ₘ(γ̂₂)", "ρ̂ₘ(γ̂₃)",
-                   "t(γ̂₀)", "t(γ̂₁)", "t(γ̂₂)", "t(γ̂₃)",
-                   "r̄²", "s(r̄²)")
+  # CORRECTED column order as per Fama-MacBeth (1973) Table 3
+  full_header <- c(
+    "Period",
+    "γ̂₀", "γ̂₁", "γ̂₂", "γ̂₃",
+    "t(γ̂₀-Rf)",
+    "s(γ̂₀)", "s(γ̂₁)", "s(γ̂₂)", "s(γ̂₃)",
+    "ρ̂₀(γ̂₀-Rf)", "ρ̂ₘ(γ̂₁)", "ρ̂₀(γ̂₂)", "ρ̂₀(γ̂₃)",
+    "t(γ̂₀)", "t(γ̂₁)", "t(γ̂₂)", "t(γ̂₃)",
+    "t(γ̂₀-Rf)",
+    "r̄²", "s(r̄²)"
+  )
   
+  # Write header
   writeData(wb, "Table 3", t(full_header), 
             startRow = current_row, startCol = 1, colNames = FALSE)
   
@@ -946,6 +782,7 @@ export_table3_final_corrected <- function(table3_full) {
   
   current_row <- current_row + 2
   
+  # Period order
   periods_ordered <- c("1935-6/68", "1935-45", "1946-55", "1956-6/68", "1935-40",
                        "1941-45", "1946-50", "1951-55", "1956-60", "1961-6/68")
   
@@ -957,14 +794,17 @@ export_table3_final_corrected <- function(table3_full) {
     round(x, 4)
   }
   
+  # Process each panel
   for (panel_letter in c("A", "B", "C", "D")) {
     
     panel_data <- table3_full %>% filter(Panel == panel_letter)
     
+    # Ensure t_g0_minus_rf column exists
     if (!"t_g0_minus_rf" %in% names(panel_data)) {
       panel_data <- panel_data %>% mutate(t_g0_minus_rf = NA_real_)
     }
     
+    # Write panel title
     writeData(wb, "Table 3", panel_titles[panel_letter], 
               startRow = current_row, startCol = 1)
     addStyle(wb, "Table 3", 
@@ -972,53 +812,56 @@ export_table3_final_corrected <- function(table3_full) {
              rows = current_row, cols = 1)
     current_row <- current_row + 1
     
+    # Process each period
     for (period in periods_ordered) {
       row_data <- rep(NA, length(full_header))
       row_data[1] <- period
       
+      # Extract data for each variable
       g0 <- panel_data %>% filter(Variable == "γ̂₀", Period == period)
       g1 <- panel_data %>% filter(Variable == "γ̂₁", Period == period)
       g2 <- panel_data %>% filter(Variable == "γ̂₂", Period == period)
       g3 <- panel_data %>% filter(Variable == "γ̂₃", Period == period)
       r2 <- panel_data %>% filter(Variable == "r̄²", Period == period)
       
-      # Columns 2-5: γ̂₀, γ̂₁, γ̂₂, γ̂₃ (means)
+      # Column 2-5: γ̂₀, γ̂₁, γ̂₂, γ̂₃ (means)
       if (nrow(g0) > 0) row_data[2] <- fmt(g0$mean[1])
       if (nrow(g1) > 0) row_data[3] <- fmt(g1$mean[1])
       if (nrow(g2) > 0) row_data[4] <- fmt(g2$mean[1])
       if (nrow(g3) > 0) row_data[5] <- fmt(g3$mean[1])
       
-      # Column 6: t(γ̂₀-Rf)
+      # Column 6: t(γ̂₀-Rf) - FIRST occurrence
       if (nrow(g0) > 0) row_data[6] <- fmt(g0$t_g0_minus_rf[1])
       
-      # Columns 7-10: s(γ̂₀), s(γ̂₁), s(γ̂₂), s(γ̂₃) (standard deviations)
+      # Column 7-10: s(γ̂₀), s(γ̂₁), s(γ̂₂), s(γ̂₃) (standard deviations)
       if (nrow(g0) > 0) row_data[7] <- fmt(g0$sd[1])
       if (nrow(g1) > 0) row_data[8] <- fmt(g1$sd[1])
       if (nrow(g2) > 0) row_data[9] <- fmt(g2$sd[1])
       if (nrow(g3) > 0) row_data[10] <- fmt(g3$sd[1])
       
-      # Columns 11-14: ρ̂₀(γ̂₀), ρ̂₀(γ̂₁), ρ̂₀(γ̂₂), ρ̂₀(γ̂₃) (rho_0)
+      # Column 11: ρ̂₀(γ̂₀-Rf) - This should be rho_0 for γ̂₀
       if (nrow(g0) > 0) row_data[11] <- fmt(g0$rho_0[1])
-      if (nrow(g1) > 0) row_data[12] <- fmt(g1$rho_0[1])
+      
+      # Column 12: ρ̂ₘ(γ̂₁) - This should be rho_m for γ̂₁
+      if (nrow(g1) > 0) row_data[12] <- fmt(g1$rho_m[1])
+      
+      # Column 13-14: ρ̂₀(γ̂₂), ρ̂₀(γ̂₃) - rho_0 for γ̂₂ and γ̂₃
       if (nrow(g2) > 0) row_data[13] <- fmt(g2$rho_0[1])
       if (nrow(g3) > 0) row_data[14] <- fmt(g3$rho_0[1])
       
-      # Columns 15-18: ρ̂ₘ(γ̂₀), ρ̂ₘ(γ̂₁), ρ̂ₘ(γ̂₂), ρ̂ₘ(γ̂₃) (rho_m)
-      if (nrow(g0) > 0) row_data[15] <- fmt(g0$rho_m[1])
-      if (nrow(g1) > 0) row_data[16] <- fmt(g1$rho_m[1])
-      if (nrow(g2) > 0) row_data[17] <- fmt(g2$rho_m[1])
-      if (nrow(g3) > 0) row_data[18] <- fmt(g3$rho_m[1])
+      # Column 15-18: t(γ̂₀), t(γ̂₁), t(γ̂₂), t(γ̂₃) (t-statistics)
+      if (nrow(g0) > 0) row_data[15] <- fmt(g0$t_stat[1])
+      if (nrow(g1) > 0) row_data[16] <- fmt(g1$t_stat[1])
+      if (nrow(g2) > 0) row_data[17] <- fmt(g2$t_stat[1])
+      if (nrow(g3) > 0) row_data[18] <- fmt(g3$t_stat[1])
       
-      # Columns 19-22: t(γ̂₀), t(γ̂₁), t(γ̂₂), t(γ̂₃) (t-statistics)
-      if (nrow(g0) > 0) row_data[19] <- fmt(g0$t_stat[1])
-      if (nrow(g1) > 0) row_data[20] <- fmt(g1$t_stat[1])
-      if (nrow(g2) > 0) row_data[21] <- fmt(g2$t_stat[1])
-      if (nrow(g3) > 0) row_data[22] <- fmt(g3$t_stat[1])
+      # Column 19: t(γ̂₀-Rf) - SECOND occurrence (duplicate of column 6)
+      if (nrow(g0) > 0) row_data[19] <- fmt(g0$t_g0_minus_rf[1])
       
-      # Columns 23-24: r̄², s(r̄²)
+      # Column 20-21: r̄², s(r̄²)
       if (nrow(r2) > 0) {
-        row_data[23] <- fmt(r2$mean[1])
-        row_data[24] <- fmt(r2$sd[1])
+        row_data[20] <- fmt(r2$mean[1])
+        row_data[21] <- fmt(r2$sd[1])
       }
       
       writeData(wb, "Table 3", t(row_data), 
@@ -1029,32 +872,39 @@ export_table3_final_corrected <- function(table3_full) {
     current_row <- current_row + 2
   }
   
+  # Auto-size columns
   setColWidths(wb, "Table 3", cols = 1:length(full_header), widths = "auto")
   
+  # Format numbers with 4 decimals
   num_style_4 <- createStyle(numFmt = "0.0000")
   data_start_row <- 6
   data_end_row <- current_row - 1
   
-  for (col in 2:24) {
+  for (col in 2:21) {
     addStyle(wb, "Table 3", num_style_4, 
              rows = data_start_row:data_end_row, cols = col, 
              gridExpand = TRUE, stack = TRUE)
   }
   
-  saveWorkbook(wb, "Table3_Final_Formatted_Corrected.xlsx", overwrite = TRUE)
-  cat("\nExported Table3_Final_Formatted_Corrected.xlsx\n")
-  cat("- Exact column order as specified\n")
-  cat("- 24 columns total:\n")
-  cat("  1. Period\n")
-  cat("  2-5. γ̂₀, γ̂₁, γ̂₂, γ̂₃\n")
-  cat("  6. t(γ̂₀-Rf)\n")
-  cat("  7-10. s(γ̂₀), s(γ̂₁), s(γ̂₂), s(γ̂₃)\n")
-  cat("  11-14. ρ̂₀(γ̂₀), ρ̂₀(γ̂₁), ρ̂₀(γ̂₂), ρ̂₀(γ̂₃)\n")
-  cat("  15-18. ρ̂ₘ(γ̂₀), ρ̂ₘ(γ̂₁), ρ̂ₘ(γ̂₂), ρ̂ₘ(γ̂₃)\n")
-  cat("  19-22. t(γ̂₀), t(γ̂₁), t(γ̂₂), t(γ̂₃)\n")
-  cat("  23-24. r̄², s(r̄²)\n")
-  cat("- All values with 4 decimals\n\n")
+  # Save workbook
+  saveWorkbook(wb, "Table3_FamaMacBeth_Corrected.xlsx", overwrite = TRUE)
+  
+  cat("\n✓ Exported Table3_FamaMacBeth_Corrected.xlsx\n")
+  cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+  cat("Column order (21 columns total):\n")
+  cat("  1.  Period\n")
+  cat("  2-5.  γ̂₀, γ̂₁, γ̂₂, γ̂₃\n")
+  cat("  6.  t(γ̂₀-Rf)\n")
+  cat("  7-10.  s(γ̂₀), s(γ̂₁), s(γ̂₂), s(γ̂₃)\n")
+  cat("  11.  ρ̂₀(γ̂₀-Rf)\n")
+  cat("  12.  ρ̂ₘ(γ̂₁)\n")
+  cat("  13-14.  ρ̂₀(γ̂₂), ρ̂₀(γ̂₃)\n")
+  cat("  15-18.  t(γ̂₀), t(γ̂₁), t(γ̂₂), t(γ̂₃)\n")
+  cat("  19.  t(γ̂₀-Rf)\n")
+  cat("  20-21.  r̄², s(r̄²)\n")
+  cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+  cat("✓ All values formatted with 4 decimals\n\n")
 }
 
 # Run the corrected export function
-export_table3_final_corrected(table3_full) 
+export_table3_corrected(table3_full)
