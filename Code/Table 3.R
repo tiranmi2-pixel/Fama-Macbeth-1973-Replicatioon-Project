@@ -1,272 +1,1060 @@
-#====================================================================
-# Fama & MacBeth (1973) Replication
-# Analysis Part: Portfolio Formation, Beta Estimation,
-# Cross-Sectional Regressions, and Formatted Excel Export
-#====================================================================
+#======================================================
+# Fama & MacBeth (1973) - TABLE 3 EXACT REPLICATION
 
-# --- Step 1: Load Packages ---
-if (!require("pacman")) install.packages("pacman")
-pacman::p_load(dplyr, tidyr, zoo, broom, knitr, purrr, lubridate, openxlsx)
+#======================================================
 
-# --- Step 2: Define Periods ---
-# This defines the 9 rolling cycles from Table 1 of the paper.
-cycles <- tribble(
-  ~cycle, ~form_start, ~form_end, ~est_start, ~est_end, ~test_start, ~test_end,
-  1,      "1926-01",   "1929-12", "1930-01",  "1934-12", "1935-01",   "1938-12",
-  2,      "1927-01",   "1933-12", "1934-01",  "1938-12", "1939-01",   "1942-12",
-  3,      "1931-01",   "1937-12", "1938-01",  "1942-12", "1943-01",   "1946-12",
-  4,      "1935-01",   "1941-12", "1942-01",  "1946-12", "1947-01",   "1950-12",
-  5,      "1939-01",   "1945-12", "1946-01",  "1950-12", "1951-01",   "1954-12",
-  6,      "1943-01",   "1949-12", "1950-01",  "1954-12", "1955-01",   "1958-12",
-  7,      "1947-01",   "1953-12", "1954-01",  "1958-12", "1959-01",   "1962-12",
-  8,      "1951-01",   "1957-12", "1958-01",  "1962-12", "1963-01",   "1966-12",
-  9,      "1955-01",   "1961-12", "1962-01",  "1966-12", "1967-01",   "1968-06"
-) %>%
-  mutate(across(form_start:test_end, as.yearmon))
+library(dplyr)
+library(tidyr)
+library(zoo)
+library(broom)
+library(purrr)
 
-# --- Step 3: Helper Functions (from your provided script) ---
-# These modular functions accurately implement the F-M methodology.
-estimate_betas <- function(returns_df, market_df, start_period, end_period) {
-  period_data <- returns_df %>%
-    filter(month >= start_period & month <= end_period) %>%
-    inner_join(market_df %>% select(month, mkt_eqw_ret), by = "month")
-  obs_counts <- period_data %>%
-    group_by(permno) %>%
-    summarise(n_obs = n(), .groups = "drop") %>%
-    filter(n_obs >= 24)
-  betas <- period_data %>%
-    semi_join(obs_counts, by = "permno") %>%
-    group_by(permno) %>%
-    do(tryCatch({
-      model <- lm(ret_adj ~ mkt_eqw_ret, data = .)
-      tibble(beta = coef(model)[2], resid_sd = sd(residuals(model), na.rm = TRUE))
-    }, error = function(e) tibble(beta = NA, resid_sd = NA))) %>%
-    ungroup() %>%
-    filter(!is.na(beta))
-  return(betas)
-}
-form_portfolios <- function(betas_df, n_portfolios = 20) {
-  ranked <- betas_df %>%
-    arrange(beta) %>%
-    mutate(rank = row_number())
-  n_securities <- nrow(ranked)
-  base_size <- floor(n_securities / n_portfolios)
-  remainder <- n_securities %% n_portfolios
-  ranked <- ranked %>%
-    mutate(portfolio = case_when(
-      rank <= base_size + ceiling(remainder / 2) ~ 1,
-      rank > n_securities - (base_size + floor(remainder / 2)) ~ n_portfolios,
-      TRUE ~ ceiling((rank - (base_size + ceiling(remainder / 2))) / base_size) + 1
-    ))
-  return(ranked %>% select(permno, portfolio))
-}
-calc_portfolio_stats <- function(portfolio_assignments, returns_df, market_df, start_period, end_period) {
-  est_data <- returns_df %>%
-    filter(month >= start_period & month <= end_period) %>%
-    inner_join(portfolio_assignments, by = "permno") %>%
-    inner_join(market_df %>% select(month, mkt_eqw_ret), by = "month")
-  obs_counts <- est_data %>%
-    group_by(permno, portfolio) %>%
-    summarise(n_obs = n(), .groups = "drop") %>%
-    filter(n_obs >= 24)
-  indiv_stats <- est_data %>%
-    semi_join(obs_counts, by = c("permno", "portfolio")) %>%
-    group_by(permno, portfolio) %>%
-    do(tryCatch({
-      model <- lm(ret_adj ~ mkt_eqw_ret, data = .)
-      tibble(beta_i = coef(model)[2], resid_sd_i = sd(residuals(model), na.rm = TRUE))
-    }, error = function(e) tibble(beta_i = NA, resid_sd_i = NA))) %>%
-    ungroup() %>%
-    filter(!is.na(beta_i))
-  port_stats <- indiv_stats %>%
-    group_by(portfolio) %>%
-    summarise(
-      beta_p = mean(beta_i, na.rm = TRUE),
-      beta_sq_p = mean(beta_i^2, na.rm = TRUE),
-      resid_sd_p = mean(resid_sd_i, na.rm = TRUE),
-      .groups = "drop"
-    )
-  return(list(portfolio_stats = port_stats, individual_stats = indiv_stats))
-}
-update_betas_monthly <- function(portfolio_assignments, individual_betas, returns_df, market_df, test_month, est_start_year) {
-  should_update <- month(as.Date(test_month)) == 1
-  if (should_update && !is.null(est_start_year)) {
-    update_start <- as.yearmon(paste0(est_start_year, "-01"))
-    est_end <- test_month - 1 / 12
-    updated_betas <- returns_df %>%
-      filter(month >= update_start & month <= est_end) %>%
-      inner_join(portfolio_assignments, by = "permno") %>%
-      inner_join(market_df %>% select(month, mkt_eqw_ret), by = "month") %>%
-      group_by(permno, portfolio) %>%
-      do(tryCatch({
-        model <- lm(ret_adj ~ mkt_eqw_ret, data = .)
-        tibble(beta_i = coef(model)[2], resid_sd_i = sd(residuals(model), na.rm = TRUE))
-      }, error = function(e) tibble(beta_i = NA, resid_sd_i = NA))) %>%
-      ungroup() %>%
-      filter(!is.na(beta_i))
-    individual_betas <- updated_betas
+# --- Initial Data Setup ---
+# We start with two data frames created in the previous data extraction script:
+# 1. `crsp_clean`: Contains the monthly stock returns (`ret_adj`).
+#    - This `ret_adj` column already handles delisting ambiguity by compounding the
+#      final return with CRSP's delisting return.
+#    - The data was also filtered for ordinary common shares (CRSP shrcd 10 or 11),
+#      which is how we tackle the ambiguity of what "common stock" means.
+# 2. `mkt_rf`: Contains the equal-weighted market return and the risk-free rate.
+
+# --- Market data with risk-free rate ---
+# Getting market data ready for joining.
+mkt_by_month <- mkt_rf %>%
+  transmute(month = as.yearmon(date), Rm = mkt_eqw_ret, Rf = rf_m)
+
+# --- Stock-month panel ---
+# Combine our individual stock returns with the market data for each month.
+# This gives us a single, tidy data frame to work with.
+stock_m <- crsp_clean %>%
+  select(permno, month, Ri = ret_adj) %>%
+  inner_join(mkt_by_month, by = "month")
+
+#======================================================
+# Helper Functions
+#======================================================
+
+# This function helps us  for calculating beta. For any given stock,
+# it runs a simple market model regression (stock return ~ market return).
+# It also calculates `s_eps_i`, the standard deviation of the residuals, which
+# we'll use as our measure of non-beta risk.
+fit_mm_security <- function(df) {
+  # We need at least a year of data to get a meaningful beta.
+  if (nrow(df) < 12 || any(!is.finite(df$Ri)) || any(!is.finite(df$Rm))) {
+    return(tibble(beta_i = NA_real_, s_eps_i = NA_real_))
   }
-  active_securities <- returns_df %>%
-    filter(month == test_month) %>%
-    select(permno)
-  monthly_stats <- individual_betas %>%
-    inner_join(active_securities, by = "permno") %>%
-    group_by(portfolio) %>%
-    summarise(
-      beta_p = mean(beta_i, na.rm = TRUE),
-      beta_sq_p = mean(beta_i^2, na.rm = TRUE),
-      resid_sd_p = mean(resid_sd_i, na.rm = TRUE),
-      .groups = "drop"
-    )
-  return(list(monthly_stats = monthly_stats, updated_individual_betas = individual_betas))
-}
-run_fama_macbeth <- function(cycle_num, cycles_df, returns_df, market_df) {
-  cycle_info <- cycles_df %>% filter(cycle == cycle_num)
-  form_betas <- estimate_betas(returns_df, market_df, cycle_info$form_start, cycle_info$form_end)
-  portfolio_assignments <- form_portfolios(form_betas)
-  est_results <- calc_portfolio_stats(portfolio_assignments, returns_df, market_df, cycle_info$est_start, cycle_info$est_end)
-  indiv_betas_current <- est_results$individual_stats
-  est_start_year <- year(as.Date(cycle_info$est_start))
-  test_months <- seq(cycle_info$test_start, cycle_info$test_end, by = 1 / 12)
-  results_list <- list()
-  for (i in seq_along(test_months)) {
-    test_month <- test_months[i]
-    monthly_update <- update_betas_monthly(portfolio_assignments, indiv_betas_current, returns_df, market_df, test_month, est_start_year)
-    port_stats_monthly <- monthly_update$monthly_stats
-    indiv_betas_current <- monthly_update$updated_individual_betas
-    port_returns <- returns_df %>%
-      filter(month == test_month) %>%
-      inner_join(portfolio_assignments, by = "permno") %>%
-      group_by(portfolio) %>%
-      summarise(ret_p = mean(ret_adj, na.rm = TRUE), .groups = "drop")
-    reg_data <- port_returns %>%
-      inner_join(port_stats_monthly, by = "portfolio") %>%
-      filter(!is.na(ret_p) & !is.na(beta_p))
-    if (nrow(reg_data) < 10) next
-    tryCatch({
-      model_a <- lm(ret_p ~ beta_p, data = reg_data)
-      model_b <- lm(ret_p ~ beta_p + beta_sq_p, data = reg_data)
-      model_c <- lm(ret_p ~ beta_p + resid_sd_p, data = reg_data)
-      model_d <- lm(ret_p ~ beta_p + beta_sq_p + resid_sd_p, data = reg_data)
-      results_list[[length(results_list) + 1]] <- tibble(
-        month = test_month,
-        gamma0_a = coef(model_a)[1], gamma1_a = coef(model_a)[2], r2_a = summary(model_a)$adj.r.squared,
-        gamma0_b = coef(model_b)[1], gamma1_b = coef(model_b)[2], gamma2_b = coef(model_b)[3], r2_b = summary(model_b)$adj.r.squared,
-        gamma0_c = coef(model_c)[1], gamma1_c = coef(model_c)[2], gamma3_c = coef(model_c)[3], r2_c = summary(model_c)$adj.r.squared,
-        gamma0_d = coef(model_d)[1], gamma1_d = coef(model_d)[2], gamma2_d = coef(model_d)[3], gamma3_d = coef(model_d)[4], r2_d = summary(model_d)$adj.r.squared
-      )
-    }, error = function(e) {})
-  }
-  return(bind_rows(results_list))
-}
-
-
-# --- Step 4: Main Execution ---
-all_fm_results <- map_dfr(1:nrow(cycles), ~run_fama_macbeth(.x, cycles, crsp_clean, mkt_rf))
-
-
-# --- Step 5: ✅ REVISED - Final Statistics Calculation ---
-calculate_final_stats <- function(df, rf_df) {
-  df_with_rf <- df %>% left_join(rf_df %>% select(month, rf_m), by = "month")
-  
-  get_stats <- function(gamma_vec, rf_vec = NULL, type = "mean") {
-    if (all(is.na(gamma_vec))) return(tibble(mean=NA, sd=NA, t_stat=NA, t_stat_minus_rf=NA, rho=NA))
-    valid_indices <- !is.na(gamma_vec)
-    valid_vec <- gamma_vec[valid_indices]
-    n_valid <- length(valid_vec)
-    if (n_valid < 2) return(tibble(mean=mean(valid_vec), sd=NA, t_stat=NA, t_stat_minus_rf=NA, rho=NA))
-    m <- mean(valid_vec)
-    s <- sd(valid_vec)
-    t <- m / (s / sqrt(n_valid))
-    rho <- if (type == "mean") cor(valid_vec[-n_valid], valid_vec[-1]) else sum(valid_vec[-n_valid] * valid_vec[-1], na.rm=T) / sum(valid_vec^2, na.rm=T)
-    t_minus_rf <- if (!is.null(rf_vec)) {
-      valid_rf <- rf_vec[valid_indices]
-      gamma_minus_rf <- valid_vec - valid_rf
-      mean(gamma_minus_rf) / (sd(gamma_minus_rf) / sqrt(n_valid))
-    } else { NA }
-    tibble(mean = m, sd = s, t_stat = t, t_stat_minus_rf = t_minus_rf, rho = rho)
-  }
-  
-  list(
-    A = list(g0 = get_stats(df_with_rf$gamma0_a, df_with_rf$rf_m, "mean"), g1 = get_stats(df_with_rf$gamma1_a, type="mean"), r2 = tibble(mean = mean(df$r2_a, na.rm=T), sd = sd(df$r2_a, na.rm=T))),
-    B = list(g0 = get_stats(df_with_rf$gamma0_b, df_with_rf$rf_m, "mean"), g1 = get_stats(df_with_rf$gamma1_b, type="mean"), g2 = get_stats(df_with_rf$gamma2_b, type="zero"), r2 = tibble(mean = mean(df$r2_b, na.rm=T), sd = sd(df$r2_b, na.rm=T))),
-    C = list(g0 = get_stats(df_with_rf$gamma0_c, df_with_rf$rf_m, "mean"), g1 = get_stats(df_with_rf$gamma1_c, type="mean"), g3 = get_stats(df_with_rf$gamma3_c, type="zero"), r2 = tibble(mean = mean(df$r2_c, na.rm=T), sd = sd(df$r2_c, na.rm=T))),
-    D = list(g0 = get_stats(df_with_rf$gamma0_d, df_with_rf$rf_m, "mean"), g1 = get_stats(df_with_rf$gamma1_d, type="mean"), g2 = get_stats(df_with_rf$gamma2_d, type="zero"), g3 = get_stats(df_with_rf$gamma3_d, type="zero"), r2 = tibble(mean = mean(df$r2_d, na.rm=T), sd = sd(df$r2_d, na.rm=T)))
+  fit <- lm(Ri ~ Rm, data = df)
+  tibble(
+    beta_i  = unname(coef(fit)[["Rm"]]), # This is the stock's beta
+    s_eps_i = sd(residuals(fit))         # This is our non-beta risk measure
   )
 }
 
+# Fama & MacBeth formed 20 portfolios. This function helps us divide N stocks
+# into 20 groups as evenly as possible.
+# The below code distributes the residual stocks the same way suggested by the paper,by distrbuting them
+# with first and last portoflios.If the total number of securities is odd, 
+#the final portfolio (Portfolio 20) receives one extra security.
+sizes_for_20 <- function(N) {
+  base <- floor(N/20)
+  r    <- N - 20*base
+  add1 <- floor(r/2)
+  add20<- ceiling(r/2)
+  sizes <- rep(base, 20)
+  if (r > 0) {
+    sizes[1]  <- sizes[1]  + add1
+    sizes[20] <- sizes[20] + add20
+  }
+  sizes
+}
 
-# --- Step 6: ✅ REVISED - Generate and Export Excel File with Exact Columns ---
-reporting_periods <- tribble(
-  ~period_name,   ~start,      ~end,
-  "1935-6/68",    "1935-01",   "1968-06", "1935-45",      "1935-01",   "1945-12",
-  "1946-55",      "1946-01",   "1955-12", "1956-6/68",    "1956-01",   "1968-06",
-  "1935-40",      "1935-01",   "1940-12", "1941-45",      "1941-01",   "1945-12",
-  "1946-50",      "1946-01",   "1950-12", "1951-55",      "1951-01",   "1955-12",
-  "1956-60",      "1956-01",   "1960-12", "1961-6/68",    "1961-01",   "1968-06"
-) %>% mutate(across(start:end, as.yearmon))
+# A simple helper to create a sequence of months.
+ym_seq <- function(y1, y2, m1 = 1, m2 = 12) {
+  seq(as.yearmon(paste0(y1, "-", sprintf("%02d", m1))),
+      as.yearmon(paste0(y2, "-", sprintf("%02d", m2))),
+      by = 1/12)
+}
 
-all_period_stats <- map(1:nrow(reporting_periods), ~{
-  period_info <- reporting_periods[.x,]
-  period_data <- all_fm_results %>% filter(month >= period_info$start & month <= period_info$end)
-  calculate_final_stats(period_data, mkt_rf)
-})
-names(all_period_stats) <- reporting_periods$period_name
+#======================================================
+# Core Function: Process one triplet (Formation, Estimation, Testing)
+#======================================================
 
-wb <- createWorkbook()
-addWorksheet(wb, "Table 3 Replication")
-header_style <- createStyle(textDecoration = "bold")
-num_style_4d <- createStyle(numFmt = "0.0000")
-num_style_2d <- createStyle(numFmt = "0.00")
-current_row <- 1
+# This is the main section of the entire replication. It takes the start and end dates
+# for the three main periods and performs the full Fama-MacBeth procedure.
+process_triplet <- function(formation_start, formation_end,
+                            est_start, est_end,
+                            test_start, test_end,
+                            test_end_month = 12) {
+  
+  # Define the three time periods for this run.
+  ym_form <- ym_seq(formation_start, formation_end) # Period to form portfolios
+  ym_est  <- ym_seq(est_start, est_end)           # Period to estimate portfolio risk
+  ym_test <- ym_seq(test_start, test_end, m2 = test_end_month) # Period to run the main test
+  
+  # Figure out which stocks we can actually use. They need to have enough data
+  # across all the periods to be included.
+  # The filtering critierias are given below.
+  # 1. Must have a valid return in the first month of the testing as stated in the paper.
+  # 2. Unbroken return history for all 5 years  of the estimation period.
+  # 3. Must have atleast 4 years of data in the initial portoflio formation period.
+  universe <- stock_m %>%
+    mutate(in_form = month %in% ym_form,
+           in_est  = month %in% ym_est) %>%
+    group_by(permno) %>%
+    summarise(
+      has_test1 = any(month == ym_test[1] & is.finite(Ri)),
+      n_est     = sum(in_est  & is.finite(Ri)),
+      n_form    = sum(in_form & is.finite(Ri)),
+      .groups = "drop"
+    ) %>%
+    filter(has_test1, n_est == length(ym_est), n_form >= 48) %>%
+    pull(permno)
+  
+  if (length(universe) < 20) {
+    warning("Too few securities")
+    return(NULL)
+  }
+  #======================================================================================  
+  ## STEP 1: FORMING THE PORTFOLIOS ##
+  # First, we calculate betas for all eligible stocks using the 'formation period' data.
+  # Then we rank them from lowest to highest beta and group them into 20 portfolios.
+  #=====================================================================================
+  betas_form <- stock_m %>%
+    filter(permno %in% universe, month %in% ym_form) %>%
+    group_by(permno) %>%
+    group_modify(~ fit_mm_security(.x)) %>%
+    ungroup() %>%
+    filter(is.finite(beta_i)) %>%
+    arrange(beta_i) # Here's the ranking by beta
+  
+  # Now, we assign each stock to one of the 20 portfolios.
+  sizes <- sizes_for_20(nrow(betas_form))
+  membership <- betas_form %>%
+    mutate(port = rep(1:20, times = sizes)) %>%
+    select(permno, port)
+  #=========================================================================
+  ## STEP 2: ESTIMATING PORTFOLIO RISK ##
+  # To avoid statistical bias, we use a totally separate 'estimation period'
+  # to get cleaner estimates of risk for the 20 portfolios we just made.
+  #=========================================================================
+  sec_est_initial <- stock_m %>%
+    filter(permno %in% membership$permno, month %in% ym_est) %>%
+    group_by(permno) %>%
+    group_modify(~ fit_mm_security(.x)) %>%
+    ungroup() %>%
+    inner_join(membership, by = "permno") %>%
+    filter(is.finite(beta_i))
+  
+  # This list will store the results from our monthly regressions.
+  results <- list()
+  sec_est_current <- sec_est_initial
+  
+  #===================================================================================
+  ## STEP 3: RUNNING THE MONTHLY REGRESSIONS ##
+  # Now for the main analysis. We loop through every single month in the 'testing period'
+  # and run a cross-sectional regression.
+  #=====================================================================================
+  for (t_idx in seq_along(ym_test)) {
+    t_month <- ym_test[t_idx]
+    
+    # F&M updated their beta estimates each year, hence we follow the same.
+    if (month(as.Date(t_month)) == 1 || t_idx == 1) {
+      update_end <- if(t_idx == 1) ym_est[length(ym_est)] else t_month - 1/12
+      ym_update <- seq(ym_est[1], update_end, by = 1/12)
+      
+      sec_est_current <- stock_m %>%
+        filter(permno %in% membership$permno, month %in% ym_update) %>%
+        group_by(permno) %>%
+        filter(n() >= 24) %>%
+        group_modify(~ fit_mm_security(.x)) %>%
+        ungroup() %>%
+        inner_join(membership, by = "permno") %>%
+        filter(is.finite(beta_i))
+    }
+    
+    # Get the stocks that actually traded in the current month.
+    active_permnos <- stock_m %>%
+      filter(month == t_month, is.finite(Ri)) %>%
+      pull(permno)
+    
+    # Now, we calculate the risk characteristics for each of our 20 portfolios.
+    # This is where we get the final portfolio beta and other risk measures for this month's test.
+    port_chars <- sec_est_current %>%
+      filter(permno %in% active_permnos) %>%
+      group_by(port) %>%
+      summarise(
+        beta_p      = mean(beta_i, na.rm = TRUE),
+        # Here's where we handle the non-linearity term. As planned, we first
+        # square the betas of the individual stocks (`beta_i^2`), and only then do we
+        # average them up to the portfolio level.
+        beta_sq_p   = mean(beta_i^2, na.rm = TRUE),
+        s_eps_p     = mean(s_eps_i, na.rm = TRUE),
+        n_sec       = n(),
+        .groups = "drop"
+      ) %>%
+      filter(n_sec >= 1)
+    
+    # Calculate the actual return for each portfolio this month (equal-weighted).
+    port_rets <- stock_m %>%
+      filter(month == t_month, permno %in% membership$permno, is.finite(Ri)) %>%
+      inner_join(membership, by = "permno") %>%
+      group_by(port) %>%
+      summarise(Rp = mean(Ri, na.rm = TRUE), .groups = "drop")
+    
+    # Merge the returns and risk characteristics. This gives us the 20 data points
+    # we need for this month's cross-sectional regression.
+    reg_data <- port_rets %>%
+      inner_join(port_chars, by = "port") %>%
+      filter(is.finite(Rp), is.finite(beta_p))
+    
+    if (nrow(reg_data) < 10) next
+    
+    # Get the risk-free rate for this specific month.
+    Rf_t <- mkt_by_month %>% filter(month == t_month) %>% pull(Rf)
+    if (length(Rf_t) == 0) Rf_t <- NA_real_
+    
+    # Finally, run the four regression models specified in the paper.
+    # The coefficients from these models are our 'gammas'.
+    tryCatch({
+      mod_a <- lm(Rp ~ beta_p, data = reg_data)
+      mod_b <- lm(Rp ~ beta_p + beta_sq_p, data = reg_data)
+      mod_c <- lm(Rp ~ beta_p + s_eps_p, data = reg_data)
+      mod_d <- lm(Rp ~ beta_p + beta_sq_p + s_eps_p, data = reg_data)
+      
+      # We save the gamma coefficients from this month's regression.
+      # After this loop finishes, we'll have a time series of these gammas.
+      results[[length(results) + 1]] <- tibble(
+        month = t_month,
+        Rf    = Rf_t,
+        g0_a = coef(mod_a)[1], g1_a = coef(mod_a)[2],
+        r2_a = summary(mod_a)$adj.r.squared,
+        g0_b = coef(mod_b)[1], g1_b = coef(mod_b)[2], g2_b = coef(mod_b)[3],
+        r2_b = summary(mod_b)$adj.r.squared,
+        g0_c = coef(mod_c)[1], g1_c = coef(mod_c)[2], g3_c = coef(mod_c)[3],
+        r2_c = summary(mod_c)$adj.r.squared,
+        g0_d = coef(mod_d)[1], g1_d = coef(mod_d)[2],
+        g2_d = coef(mod_d)[3], g3_d = coef(mod_d)[4],
+        r2_d = summary(mod_d)$adj.r.squared
+      )
+    }, error = function(e) NULL)
+  }
+  
+  bind_rows(results)
+}
 
-for (panel in c("A", "B", "C", "D")) {
-  writeData(wb, 1, paste("Panel", panel), startCol = 1, startRow = current_row)
-  addStyle(wb, 1, createStyle(textDecoration="bold", fontSize=14), rows=current_row, cols=1, stack=TRUE)
+#======================================================
+# Run all 9 triplets
+#======================================================
+
+# The paper repeats the entire process 9 times on overlapping periods to
+# make sure the results are robust. We define those 9 periods here.
+triplets <- tibble(
+  period = 1:9,
+  form_start = c(1926, 1927, 1931, 1935, 1939, 1943, 1947, 1951, 1955),
+  form_end   = c(1929, 1933, 1937, 1941, 1945, 1949, 1953, 1957, 1961),
+  est_start  = c(1930, 1934, 1938, 1942, 1946, 1950, 1954, 1958, 1962),
+  est_end    = c(1934, 1938, 1942, 1946, 1950, 1954, 1958, 1962, 1966),
+  test_start = c(1935, 1939, 1943, 1947, 1951, 1955, 1959, 1963, 1967),
+  test_end   = c(1938, 1942, 1946, 1950, 1954, 1958, 1962, 1966, 1968),
+  test_end_m = c(  12,   12,   12,   12,   12,   12,   12,   12,    6)
+)
+
+cat("Running Fama-MacBeth regressions...\n")
+
+# This is where we run the core function for each of the 9 periods.
+all_results <- triplets %>%
+  rowwise() %>%
+  mutate(
+    results = list(process_triplet(form_start, form_end,
+                                   est_start, est_end,
+                                   test_start, test_end, test_end_m))
+  ) %>%
+  pull(results) %>%
+  bind_rows()
+
+cat("Completed", nrow(all_results), "monthly regressions\n\n")
+
+#======================================================
+# Calculate ALL statistics for Table 3
+#======================================================
+calc_table3_stats <- function(df, model_suffix) {
+  
+  g0_col <- paste0("g0_", model_suffix)
+  g1_col <- paste0("g1_", model_suffix)
+  g2_col <- paste0("g2_", model_suffix)
+  g3_col <- paste0("g3_", model_suffix)
+  r2_col <- paste0("r2_", model_suffix)
+  
+  n <- nrow(df)
+  
+  # Function to calculate all stats for one variable
+  calc_all_stats <- function(vals, var_name, include_rf_test = FALSE) {
+    vals_clean <- vals[is.finite(vals)]
+    n_valid <- length(vals_clean)
+    
+    if (n_valid == 0) {
+      result <- tibble(
+        Variable = var_name,
+        mean = NA, sd = NA, t_stat = NA,
+        rho_m = NA, rho_0 = NA
+      )
+      if (include_rf_test) {
+        result$t_g0_minus_rf <- NA
+      }
+      return(result)
+    }
+    
+    mn <- mean(vals_clean)
+    s <- sd(vals_clean)
+    t_stat <- mn / (s / sqrt(n_valid))
+    
+    # Serial correlations
+    if (n_valid > 1) {
+      rho_m <- cor(vals_clean[-n_valid] - mn, vals_clean[-1] - mn, 
+                   use = "complete.obs")
+      rho_0 <- cor(vals_clean[-n_valid], vals_clean[-1], 
+                   use = "complete.obs")
+    } else {
+      rho_m <- NA
+      rho_0 <- NA
+    }
+    
+    result <- tibble(
+      Variable = var_name,
+      mean = mn,
+      sd = s,
+      t_stat = t_stat,
+      rho_m = rho_m,
+      rho_0 = rho_0
+    )
+    
+    # Add t(γ̂₀ - Rf) test for gamma 0
+    if (include_rf_test && "Rf" %in% names(df)) {
+      g0_clean <- vals_clean
+      rf_clean <- df$Rf[is.finite(df[[g0_col]])]
+      diff <- g0_clean - rf_clean
+      if (length(diff) > 0) {
+        mn_diff <- mean(diff, na.rm = TRUE)
+        sd_diff <- sd(diff, na.rm = TRUE)
+        result$t_g0_minus_rf <- mn_diff / (sd_diff / sqrt(length(diff)))
+      } else {
+        result$t_g0_minus_rf <- NA
+      }
+    } else if (include_rf_test) {
+      result$t_g0_minus_rf <- NA
+    }
+    
+    return(result)
+  }
+  
+  # Gamma 0 - with RF test
+  stats_g0 <- calc_all_stats(df[[g0_col]], "γ̂₀", include_rf_test = TRUE)
+  
+  # Gamma 1
+  stats_g1 <- calc_all_stats(df[[g1_col]], "γ̂₁")
+  stats_g1$t_g0_minus_rf <- NA  # Add column for consistency
+  
+  # Gamma 2 (if exists)
+  stats_g2 <- NULL
+  if (g2_col %in% names(df)) {
+    stats_g2 <- calc_all_stats(df[[g2_col]], "γ̂₂")
+    stats_g2$t_g0_minus_rf <- NA  # Add column for consistency
+  }
+  
+  # Gamma 3 (if exists)
+  stats_g3 <- NULL
+  if (g3_col %in% names(df)) {
+    stats_g3 <- calc_all_stats(df[[g3_col]], "γ̂₃")
+    stats_g3$t_g0_minus_rf <- NA  # Add column for consistency
+  }
+  
+  # R-squared
+  r2_vals <- df[[r2_col]][is.finite(df[[r2_col]])]
+  if (length(r2_vals) > 0) {
+    stats_r2 <- tibble(
+      Variable = "r̄²",
+      mean = mean(r2_vals),
+      sd = sd(r2_vals),
+      t_stat = NA,
+      rho_m = NA,
+      rho_0 = NA,
+      t_g0_minus_rf = NA
+    )
+  } else {
+    stats_r2 <- NULL
+  }
+  
+  # Combine all
+  bind_rows(stats_g0, stats_g1, stats_g2, stats_g3, stats_r2)
+}
+#======================================================
+# Define all 10 periods for Table 3
+#======================================================
+
+periods_table3 <- tribble(
+  ~label,       ~start, ~start_m, ~end,  ~end_m,
+  "1935-6/68",   1935,    1,      1968,    6,
+  "1935-45",     1935,    1,      1945,   12,
+  "1946-55",     1946,    1,      1955,   12,
+  "1956-6/68",   1956,    1,      1968,    6,
+  "1935-40",     1935,    1,      1940,   12,
+  "1941-45",     1941,    1,      1945,   12,
+  "1946-50",     1946,    1,      1950,   12,
+  "1951-55",     1951,    1,      1955,   12,
+  "1956-60",     1956,    1,      1960,   12,
+  "1961-6/68",   1961,    1,      1968,    6
+) %>%
+  mutate(
+    start_ym = as.yearmon(paste0(start, "-", sprintf("%02d", start_m))),
+    end_ym   = as.yearmon(paste0(end, "-", sprintf("%02d", end_m)))
+  )
+
+#======================================================
+# Generate Table 3 statistics for all periods and models
+#======================================================
+
+table3_list <- list()
+
+for (i in 1:nrow(periods_table3)) {
+  p <- periods_table3[i, ]
+  
+  df_period <- all_results %>%
+    filter(month >= p$start_ym, month <= p$end_ym)
+  
+  if (nrow(df_period) == 0) next
+  
+  # Calculate stats for all 4 models
+  stats_a <- calc_table3_stats(df_period, "a") %>% mutate(Panel = "A")
+  stats_b <- calc_table3_stats(df_period, "b") %>% mutate(Panel = "B")
+  stats_c <- calc_table3_stats(df_period, "c") %>% mutate(Panel = "C")
+  stats_d <- calc_table3_stats(df_period, "d") %>% mutate(Panel = "D")
+  
+  combined <- bind_rows(stats_a, stats_b, stats_c, stats_d) %>%
+    mutate(Period = p$label) %>%
+    select(Period, Panel, everything())
+  
+  table3_list[[p$label]] <- combined
+}
+
+table3_full <- bind_rows(table3_list)
+
+#======================================================
+# CREATE EXACT TABLE 3 FORMAT (21 columns per period)
+#======================================================
+
+create_table3_exact <- function(table3_full) {
+  
+  # Split into two period groups
+  periods_1_5 <- c("1935-6/68", "1935-45", "1946-55", "1956-6/68", "1935-40")
+  periods_6_10 <- c("1941-45", "1946-50", "1951-55", "1956-60", "1961-6/68")
+  
+  results <- list()
+  
+  for (panel_letter in c("A", "B", "C", "D")) {
+    
+    panel_data <- table3_full %>% 
+      filter(Panel == panel_letter)
+    
+    # Periods 1-5
+    data_1_5 <- panel_data %>%
+      filter(Period %in% periods_1_5) %>%
+      mutate(Period = factor(Period, levels = periods_1_5)) %>%
+      arrange(Period, Variable)
+    
+    # Check if t_g0_minus_rf exists, if not add it
+    if (!"t_g0_minus_rf" %in% names(data_1_5)) {
+      data_1_5 <- data_1_5 %>% mutate(t_g0_minus_rf = NA_real_)
+    }
+    
+    data_1_5 <- data_1_5 %>%
+      select(Period, Variable, mean, sd, t_stat, rho_m, rho_0, t_g0_minus_rf)
+    
+    # Periods 6-10
+    data_6_10 <- panel_data %>%
+      filter(Period %in% periods_6_10) %>%
+      mutate(Period = factor(Period, levels = periods_6_10)) %>%
+      arrange(Period, Variable)
+    
+    # Check if t_g0_minus_rf exists, if not add it
+    if (!"t_g0_minus_rf" %in% names(data_6_10)) {
+      data_6_10 <- data_6_10 %>% mutate(t_g0_minus_rf = NA_real_)
+    }
+    
+    data_6_10 <- data_6_10 %>%
+      select(Period, Variable, mean, sd, t_stat, rho_m, rho_0, t_g0_minus_rf)
+    
+    results[[paste0("Panel_", panel_letter, "_Periods_1_5")]] <- data_1_5
+    results[[paste0("Panel_", panel_letter, "_Periods_6_10")]] <- data_6_10
+  }
+  
+  results
+}
+
+table3_formatted <- create_table3_exact(table3_full)
+
+#======================================================
+# PRINT TABLE 3 IN EXACT PAPER FORMAT
+#======================================================
+
+print_table3_paper <- function(table3_formatted) {
+  
+  panel_titles <- c(
+    "A" = "PANEL A: Rₚₜ = γ₀ₜ + γ₁ₜβₚ + ηₚₜ",
+    "B" = "PANEL B: Rₚₜ = γ₀ₜ + γ₁ₜβₚ + γ₂ₜβₚ² + ηₚₜ",
+    "C" = "PANEL C: Rₚₜ = γ₀ₜ + γ₁ₜβₚ + γ₃ₜs̄ₚ(εᵢ) + ηₚₜ",
+    "D" = "PANEL D: Rₚₜ = γ₀ₜ + γ₁ₜβₚ + γ₂ₜβₚ² + γ₃ₜs̄ₚ(εᵢ) + ηₚₜ"
+  )
+  
+  cat("\n")
+  cat(rep("=", 180), "\n", sep = "")
+  cat("TABLE 3\n")
+  cat("Risk, Return, and Equilibrium: Empirical Tests\n")
+  cat(rep("=", 180), "\n\n", sep = "")
+  
+  for (panel_letter in c("A", "B", "C", "D")) {
+    
+    cat("\n", rep("-", 180), "\n", sep = "")
+    cat(panel_titles[panel_letter], "\n")
+    cat(rep("-", 180), "\n\n", sep = "")
+    
+    # PERIODS 1-5
+    cat("PERIODS\n")
+    cat(sprintf("%-15s", " "))
+    for (i in 1:5) {
+      cat(sprintf("%20s", i))
+    }
+    cat("\n")
+    cat(sprintf("%-15s", " "))
+    periods_1_5 <- c("1935-6/68", "1935-45", "1946-55", "1956-6/68", "1935-40")
+    for (p in periods_1_5) {
+      cat(sprintf("%20s", p))
+    }
+    cat("\n\n")
+    
+    data_1_5 <- table3_formatted[[paste0("Panel_", panel_letter, "_Periods_1_5")]]
+    
+    if (!is.null(data_1_5) && nrow(data_1_5) > 0) {
+      
+      # Get unique periods and variables
+      periods <- levels(data_1_5$Period)
+      variables <- unique(data_1_5$Variable)
+      
+      # Print each statistic row
+      for (var in variables) {
+        
+        # Mean row
+        cat(sprintf("%-15s", var))
+        for (p in periods) {
+          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(mean)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.4f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # SD row
+        cat(sprintf("%-15s", "s(γ̂ⱼ)"))
+        for (p in periods) {
+          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(sd)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.4f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # t-stat row
+        cat(sprintf("%-15s", "t(γ̂ⱼ)"))
+        for (p in periods) {
+          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(t_stat)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.2f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # rho_m row
+        cat(sprintf("%-15s", "ρ̂ₘ(γ̂ⱼ)"))
+        for (p in periods) {
+          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(rho_m)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.3f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # rho_0 row
+        cat(sprintf("%-15s", "ρ̂₀(γ̂ⱼ)"))
+        for (p in periods) {
+          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(rho_0)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.3f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # t(γ̂₀ - Rf) row for γ̂₀ only
+        if (var == "γ̂₀") {
+          cat(sprintf("%-15s", "t(γ̂₀-Rf)"))
+          for (p in periods) {
+            val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(t_g0_minus_rf)
+            if (length(val) > 0 && is.finite(val)) {
+              cat(sprintf("%20.2f", val))
+            } else {
+              cat(sprintf("%20s", ""))
+            }
+          }
+          cat("\n")
+        }
+        
+        cat("\n")
+      }
+    }
+    
+    cat("\n")
+    
+    # PERIODS 6-10
+    cat("PERIODS\n")
+    cat(sprintf("%-15s", " "))
+    for (i in 6:10) {
+      cat(sprintf("%20s", i))
+    }
+    cat("\n")
+    cat(sprintf("%-15s", " "))
+    periods_6_10 <- c("1941-45", "1946-50", "1951-55", "1956-60", "1961-6/68")
+    for (p in periods_6_10) {
+      cat(sprintf("%20s", p))
+    }
+    cat("\n\n")
+    
+    data_6_10 <- table3_formatted[[paste0("Panel_", panel_letter, "_Periods_6_10")]]
+    
+    if (!is.null(data_6_10) && nrow(data_6_10) > 0) {
+      
+      periods <- levels(data_6_10$Period)
+      variables <- unique(data_6_10$Variable)
+      
+      for (var in variables) {
+        
+        # Mean row
+        cat(sprintf("%-15s", var))
+        for (p in periods) {
+          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(mean)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.4f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # SD row
+        cat(sprintf("%-15s", "s(γ̂ⱼ)"))
+        for (p in periods) {
+          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(sd)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.4f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # t-stat row
+        cat(sprintf("%-15s", "t(γ̂ⱼ)"))
+        for (p in periods) {
+          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(t_stat)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.2f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # rho_m row
+        cat(sprintf("%-15s", "ρ̂ₘ(γ̂ⱼ)"))
+        for (p in periods) {
+          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(rho_m)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.3f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # rho_0 row
+        cat(sprintf("%-15s", "ρ̂₀(γ̂ⱼ)"))
+        for (p in periods) {
+          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(rho_0)
+          if (length(val) > 0 && is.finite(val)) {
+            cat(sprintf("%20.3f", val))
+          } else {
+            cat(sprintf("%20s", ""))
+          }
+        }
+        cat("\n")
+        
+        # t(γ̂₀ - Rf) row for γ̂₀ only
+        if (var == "γ̂₀") {
+          cat(sprintf("%-15s", "t(γ̂₀-Rf)"))
+          for (p in periods) {
+            val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(t_g0_minus_rf)
+            if (length(val) > 0 && is.finite(val)) {
+              cat(sprintf("%20.2f", val))
+            } else {
+              cat(sprintf("%20s", ""))
+            }
+          }
+          cat("\n")
+        }
+        
+        cat("\n")
+      }
+    }
+    
+    cat("\n\n")
+  }
+}
+
+# Print the table
+print_table3_paper(table3_formatted)
+
+
+#======================================================
+# Export to CSV (one file per panel, exact format)
+#======================================================
+
+export_table3_csv <- function(table3_full) {
+  
+  for (panel_letter in c("A", "B", "C", "D")) {
+    
+    # Filter the data for the specific panel
+    panel_data <- table3_full %>%
+      filter(Panel == panel_letter)
+    
+    # Ensure the t_g0_minus_rf column exists before selecting, adding it if necessary.
+    # This makes the function more robust.
+    if (!"t_g0_minus_rf" %in% names(panel_data)) {
+      panel_data <- panel_data %>% mutate(t_g0_minus_rf = NA_real_)
+    }
+    
+    # Select and rename columns for the final CSV output.
+    # This approach is cleaner and avoids the error.
+    panel_data_final <- panel_data %>%
+      select(
+        Period, 
+        Variable, 
+        mean, 
+        sd, 
+        t_stat, 
+        rho_m, 
+        rho_0, 
+        t_g0_minus_rf
+      ) %>%
+      rename(
+        `γ̂ⱼ` = mean,
+        `s(γ̂ⱼ)` = sd,
+        `t(γ̂ⱼ)` = t_stat,
+        `ρ̂ₘ(γ̂ⱼ)` = rho_m,
+        `ρ̂₀(γ̂ⱼ)` = rho_0,
+        `t(γ̂₀-Rf)` = t_g0_minus_rf
+      )
+    
+    filename <- paste0("Table3_Panel_", panel_letter, ".csv")
+    write.csv(panel_data_final, filename, row.names = FALSE, na = "")
+    cat("Exported", filename, "\n")
+  }
+}
+
+# Run the corrected export function
+export_table3_csv(table3_full)
+
+cat("\n\nTable 3 replication complete!\n")
+#======================================================
+# Export to Excel with proper formatting (ALL 21 COLUMNS)
+#======================================================
+
+
+export_table3_excel <- function(table3_formatted) {
+  
+  wb <- createWorkbook()
+  
+  panel_titles <- c(
+    "A" = "Panel A: Rpt = γ0t + γ1t*βp + ηpt",
+    "B" = "Panel B: Rpt = γ0t + γ1t*βp + γ2t*βp² + ηpt",
+    "C" = "Panel C: Rpt = γ0t + γ1t*βp + γ3t*sp(εi) + ηpt",
+    "D" = "Panel D: Rpt = γ0t + γ1t*βp + γ2t*βp² + γ3t*sp(εi) + ηpt"
+  )
+  
+  for (panel_letter in c("A", "B", "C", "D")) {
+    
+    sheet_name <- paste0("Panel_", panel_letter)
+    addWorksheet(wb, sheet_name)
+    
+    current_row <- 1
+    
+    # Title
+    writeData(wb, sheet_name, panel_titles[panel_letter], startRow = current_row, startCol = 1)
+    mergeCells(wb, sheet_name, cols = 1:6, rows = current_row)
+    addStyle(wb, sheet_name, createStyle(fontSize = 14, textDecoration = "bold"), rows = current_row, cols = 1)
+    current_row <- current_row + 2
+    
+    # Helper to build and write a table block
+    write_excel_block <- function(data_block, period_labels) {
+      if (is.null(data_block) || nrow(data_block) == 0) {
+        writeData(wb, sheet_name, "No data for this period.", startRow = current_row)
+        current_row <<- current_row + 2
+        return()
+      }
+      
+      # Helper to safely get a value
+      get_value <- function(p, v, stat_col) {
+        val <- data_block %>%
+          filter(Period == p, Variable == v) %>%
+          pull(!!sym(stat_col))
+        # Return the value if it's a single finite number, otherwise NA
+        if (length(val) == 1 && is.finite(val)) {
+          return(val)
+        }
+        return(NA)
+      }
+      
+      # Build the entire table as a list of character vectors (rows)
+      all_rows_list <- list()
+      variables <- unique(data_block$Variable)
+      stat_names_in_order <- c("γ̂₀", "γ̂₁", "γ̂₂", "γ̂₃", "r̄²")
+      variables <- intersect(stat_names_in_order, variables) # Keep original order
+      
+      for (var in variables) {
+        # Define the stats to extract for the current variable
+        stats_to_get <- list(
+          "mean" = var,
+          "sd" = "s(γ̂ⱼ)",
+          "t_stat" = "t(γ̂ⱼ)",
+          "rho_m" = "ρ̂ₘ(γ̂ⱼ)",
+          "rho_0" = "ρ̂₀(γ̂ⱼ)"
+        )
+        if (var == "γ̂₀") {
+          stats_to_get$t_g0_minus_rf <- "t(γ̂₀-Rf)"
+        }
+        if (var == "r̄²") {
+          stats_to_get <- list("mean" = "r̄²")
+        }
+        
+        # Create a row for each statistic
+        for (stat_code in names(stats_to_get)) {
+          stat_name <- stats_to_get[[stat_code]]
+          new_row <- c(stat_name)
+          
+          for (p in period_labels) {
+            new_row <- c(new_row, get_value(p, var, stat_code))
+          }
+          all_rows_list <- append(all_rows_list, list(new_row))
+        }
+        # Add a blank row for spacing between variables
+        if (var != tail(variables, 1)) {
+          all_rows_list <- append(all_rows_list, list(rep(NA, length(period_labels) + 1)))
+        }
+      }
+      
+      # Convert the list of rows into a single data frame
+      final_table <- as.data.frame(do.call(rbind, all_rows_list), stringsAsFactors = FALSE)
+      names(final_table) <- c("Statistic", period_labels)
+      
+      # Convert numeric columns from character to numeric
+      for (col_idx in 2:ncol(final_table)) {
+        final_table[, col_idx] <- as.numeric(final_table[, col_idx])
+      }
+      
+      # Write the complete data frame to the Excel sheet
+      writeData(wb, sheet_name, final_table, startRow = current_row, colNames = TRUE)
+      
+      # Add some styling
+      header_style <- createStyle(textDecoration = "bold", border = "bottom")
+      addStyle(wb, sheet_name, header_style, rows = current_row, cols = 1:ncol(final_table), gridExpand = TRUE)
+      
+      current_row <<- current_row + nrow(final_table) + 2 # Update row counter for next block
+    }
+    
+    # PERIODS 1-5
+    periods_1_5 <- c("1935-6/68", "1935-45", "1946-55", "1956-6/68", "1935-40")
+    write_excel_block(table3_formatted[[paste0("Panel_", panel_letter, "_Periods_1_5")]], periods_1_5)
+    
+    # PERIODS 6-10
+    periods_6_10 <- c("1941-45", "1946-50", "1951-55", "1956-60", "1961-6/68")
+    write_excel_block(table3_formatted[[paste0("Panel_", panel_letter, "_Periods_6_10")]], periods_6_10)
+    
+    setColWidths(wb, sheet_name, cols = 1:12, widths = "auto")
+  }
+  
+  saveWorkbook(wb, "Table3_Fama_MacBeth_1973.xlsx", overwrite = TRUE)
+  cat("\nTable 3 exported to Table3_Fama_MacBeth_1973.xlsx\n")
+}
+
+export_table3_excel(table3_formatted)
+
+
+------------
+  library(openxlsx)
+
+export_table3_final_corrected <- function(table3_full) {
+  
+  wb <- createWorkbook()
+  addWorksheet(wb, "Table 3")
+  
+  current_row <- 1
+  
+  writeData(wb, "Table 3", "TABLE 3", startRow = current_row, startCol = 1)
+  addStyle(wb, "Table 3", 
+           createStyle(fontSize = 16, textDecoration = "bold"), 
+           rows = current_row, cols = 1)
   current_row <- current_row + 1
   
-  # Build a comprehensive data frame with all possible columns
-  panel_df <- map_dfr(reporting_periods$period_name, ~{
-    stats <- all_period_stats[[.x]][[panel]]
-    tibble(
-      PERIOD = .x,
-      `γ̄₀` = stats$g0$mean, `s(γ₀)` = stats$g0$sd, `t(γ̄₀)` = stats$g0$t_stat, `t(γ̄₀-R_f)` = stats$g0$t_stat_minus_rf,
-      `γ̄₁` = stats$g1$mean, `s(γ₁)` = stats$g1$sd, `t(γ̄₁)` = stats$g1$t_stat,
-      `γ̄₂` = if("g2" %in% names(stats)) stats$g2$mean else NA, `s(γ₂)` = if("g2" %in% names(stats)) stats$g2$sd else NA, `t(γ̄₂)` = if("g2" %in% names(stats)) stats$g2$t_stat else NA,
-      `γ̄₃` = if("g3" %in% names(stats)) stats$g3$mean else NA, `s(γ₃)` = if("g3" %in% names(stats)) stats$g3$sd else NA, `t(γ̄₃)` = if("g3" %in% names(stats)) stats$g3$t_stat else NA,
-      `ρₘ(γ₀)` = stats$g0$rho, `ρₘ(γ₁)` = stats$g1$rho,
-      `ρ₀(γ₂)` = if("g2" %in% names(stats)) stats$g2$rho else NA,
-      `ρ₀(γ₃)` = if("g3" %in% names(stats)) stats$g3$rho else NA,
-      `r̄²` = stats$r2$mean, `s(r²)` = stats$r2$sd
-    )
-  })
+  writeData(wb, "Table 3", 
+            "Risk, Return, and Equilibrium: Empirical Tests", 
+            startRow = current_row, startCol = 1)
+  current_row <- current_row + 3
   
-  # Select and order columns exactly as they appear in the paper for each panel
-  final_cols <- switch(panel,
-                       "A" = c("PERIOD", "γ̄₀", "s(γ₀)", "t(γ̄₀)", "t(γ̄₀-R_f)", "γ̄₁", "s(γ₁)", "t(γ̄₁)", "ρₘ(γ₀)", "ρₘ(γ₁)", "r̄²", "s(r²)"),
-                       "B" = c("PERIOD", "γ̄₀", "s(γ₀)", "t(γ̄₀)", "t(γ̄₀-R_f)", "γ̄₁", "s(γ₁)", "t(γ̄₁)", "γ̄₂", "s(γ₂)", "t(γ̄₂)", "ρₘ(γ₀)", "ρₘ(γ₁)", "ρ₀(γ₂)", "r̄²", "s(r²)"),
-                       "C" = c("PERIOD", "γ̄₀", "s(γ₀)", "t(γ̄₀)", "t(γ̄₀-R_f)", "γ̄₁", "s(γ₁)", "t(γ̄₁)", "γ̄₃", "s(γ₃)", "t(γ̄₃)", "ρₘ(γ₀)", "ρₘ(γ₁)", "ρ₀(γ₃)", "r̄²", "s(r²)"),
-                       "D" = c("PERIOD", "γ̄₀", "s(γ₀)", "t(γ̄₀)", "t(γ̄₀-R_f)", "γ̄₁", "s(γ₁)", "t(γ̄₁)", "γ̄₂", "s(γ₂)", "t(γ̄₂)", "γ̄₃", "s(γ₃)", "t(γ̄₃)", "ρₘ(γ₀)", "ρₘ(γ₁)", "ρ₀(γ₂)", "ρ₀(γ₃)", "r̄²", "s(r²)")
-  )
+  # EXACT order from your specification (21 columns total)
+  full_header <- c("Period",
+                   "γ̂₀", "γ̂₁", "γ̂₂", "γ̂₃",
+                   "t(γ̂₀-Rf)",
+                   "s(γ̂₀)", "s(γ̂₁)", "s(γ̂₂)", "s(γ̂₃)",
+                   "ρ̂₀(γ̂₀)", "ρ̂₀(γ̂₁)", "ρ̂₀(γ̂₂)", "ρ̂₀(γ̂₃)",
+                   "ρ̂ₘ(γ̂₀)", "ρ̂ₘ(γ̂₁)", "ρ̂ₘ(γ̂₂)", "ρ̂ₘ(γ̂₃)",
+                   "t(γ̂₀)", "t(γ̂₁)", "t(γ̂₂)", "t(γ̂₃)",
+                   "r̄²", "s(r̄²)")
   
-  panel_df_final <- panel_df %>% select(all_of(final_cols))
+  writeData(wb, "Table 3", t(full_header), 
+            startRow = current_row, startCol = 1, colNames = FALSE)
   
-  writeData(wb, 1, panel_df_final, startRow = current_row, headerStyle = header_style)
+  header_style <- createStyle(textDecoration = "bold", 
+                              border = "bottom", fgFill = "#F0F0F0")
+  addStyle(wb, "Table 3", header_style, 
+           rows = current_row, cols = 1:length(full_header), gridExpand = TRUE)
   
-  # Apply formatting
-  addStyle(wb, 1, num_style_4d, rows = (current_row+1):(current_row + nrow(panel_df_final)), cols = which(grepl("γ̄|s\\(|r̄²|s\\(r²\\)", colnames(panel_df_final))), gridExpand = TRUE, stack = TRUE)
-  addStyle(wb, 1, num_style_2d, rows = (current_row+1):(current_row + nrow(panel_df_final)), cols = which(grepl("t\\(γ̄|ρ", colnames(panel_df_final))), gridExpand = TRUE, stack = TRUE)
+  current_row <- current_row + 2
   
-  # Apply borders
-  addStyle(wb, 1, createStyle(border = "Top", borderStyle = "thick"), rows = current_row, cols = 1:ncol(panel_df_final), stack=TRUE)
-  addStyle(wb, 1, createStyle(border = "Bottom"), rows = current_row, cols = 1:ncol(panel_df_final), stack=TRUE)
-  addStyle(wb, 1, createStyle(border = "Bottom", borderStyle = "thick"), rows = current_row + nrow(panel_df_final), cols = 1:ncol(panel_df_final), stack=TRUE)
+  periods_ordered <- c("1935-6/68", "1935-45", "1946-55", "1956-6/68", "1935-40",
+                       "1941-45", "1946-50", "1951-55", "1956-60", "1961-6/68")
   
-  current_row <- current_row + nrow(panel_df_final) + 3
+  panel_titles <- c("A" = "PANEL A", "B" = "PANEL B", 
+                    "C" = "PANEL C", "D" = "PANEL D")
+  
+  fmt <- function(x) {
+    if (is.na(x)) return(NA)
+    round(x, 4)
+  }
+  
+  for (panel_letter in c("A", "B", "C", "D")) {
+    
+    panel_data <- table3_full %>% filter(Panel == panel_letter)
+    
+    if (!"t_g0_minus_rf" %in% names(panel_data)) {
+      panel_data <- panel_data %>% mutate(t_g0_minus_rf = NA_real_)
+    }
+    
+    writeData(wb, "Table 3", panel_titles[panel_letter], 
+              startRow = current_row, startCol = 1)
+    addStyle(wb, "Table 3", 
+             createStyle(fontSize = 11, textDecoration = "bold"), 
+             rows = current_row, cols = 1)
+    current_row <- current_row + 1
+    
+    for (period in periods_ordered) {
+      row_data <- rep(NA, length(full_header))
+      row_data[1] <- period
+      
+      g0 <- panel_data %>% filter(Variable == "γ̂₀", Period == period)
+      g1 <- panel_data %>% filter(Variable == "γ̂₁", Period == period)
+      g2 <- panel_data %>% filter(Variable == "γ̂₂", Period == period)
+      g3 <- panel_data %>% filter(Variable == "γ̂₃", Period == period)
+      r2 <- panel_data %>% filter(Variable == "r̄²", Period == period)
+      
+      # Columns 2-5: γ̂₀, γ̂₁, γ̂₂, γ̂₃ (means)
+      if (nrow(g0) > 0) row_data[2] <- fmt(g0$mean[1])
+      if (nrow(g1) > 0) row_data[3] <- fmt(g1$mean[1])
+      if (nrow(g2) > 0) row_data[4] <- fmt(g2$mean[1])
+      if (nrow(g3) > 0) row_data[5] <- fmt(g3$mean[1])
+      
+      # Column 6: t(γ̂₀-Rf)
+      if (nrow(g0) > 0) row_data[6] <- fmt(g0$t_g0_minus_rf[1])
+      
+      # Columns 7-10: s(γ̂₀), s(γ̂₁), s(γ̂₂), s(γ̂₃) (standard deviations)
+      if (nrow(g0) > 0) row_data[7] <- fmt(g0$sd[1])
+      if (nrow(g1) > 0) row_data[8] <- fmt(g1$sd[1])
+      if (nrow(g2) > 0) row_data[9] <- fmt(g2$sd[1])
+      if (nrow(g3) > 0) row_data[10] <- fmt(g3$sd[1])
+      
+      # Columns 11-14: ρ̂₀(γ̂₀), ρ̂₀(γ̂₁), ρ̂₀(γ̂₂), ρ̂₀(γ̂₃) (rho_0)
+      if (nrow(g0) > 0) row_data[11] <- fmt(g0$rho_0[1])
+      if (nrow(g1) > 0) row_data[12] <- fmt(g1$rho_0[1])
+      if (nrow(g2) > 0) row_data[13] <- fmt(g2$rho_0[1])
+      if (nrow(g3) > 0) row_data[14] <- fmt(g3$rho_0[1])
+      
+      # Columns 15-18: ρ̂ₘ(γ̂₀), ρ̂ₘ(γ̂₁), ρ̂ₘ(γ̂₂), ρ̂ₘ(γ̂₃) (rho_m)
+      if (nrow(g0) > 0) row_data[15] <- fmt(g0$rho_m[1])
+      if (nrow(g1) > 0) row_data[16] <- fmt(g1$rho_m[1])
+      if (nrow(g2) > 0) row_data[17] <- fmt(g2$rho_m[1])
+      if (nrow(g3) > 0) row_data[18] <- fmt(g3$rho_m[1])
+      
+      # Columns 19-22: t(γ̂₀), t(γ̂₁), t(γ̂₂), t(γ̂₃) (t-statistics)
+      if (nrow(g0) > 0) row_data[19] <- fmt(g0$t_stat[1])
+      if (nrow(g1) > 0) row_data[20] <- fmt(g1$t_stat[1])
+      if (nrow(g2) > 0) row_data[21] <- fmt(g2$t_stat[1])
+      if (nrow(g3) > 0) row_data[22] <- fmt(g3$t_stat[1])
+      
+      # Columns 23-24: r̄², s(r̄²)
+      if (nrow(r2) > 0) {
+        row_data[23] <- fmt(r2$mean[1])
+        row_data[24] <- fmt(r2$sd[1])
+      }
+      
+      writeData(wb, "Table 3", t(row_data), 
+                startRow = current_row, startCol = 1, colNames = FALSE)
+      current_row <- current_row + 1
+    }
+    
+    current_row <- current_row + 2
+  }
+  
+  setColWidths(wb, "Table 3", cols = 1:length(full_header), widths = "auto")
+  
+  num_style_4 <- createStyle(numFmt = "0.0000")
+  data_start_row <- 6
+  data_end_row <- current_row - 1
+  
+  for (col in 2:24) {
+    addStyle(wb, "Table 3", num_style_4, 
+             rows = data_start_row:data_end_row, cols = col, 
+             gridExpand = TRUE, stack = TRUE)
+  }
+  
+  saveWorkbook(wb, "Table3_Final_Formatted_Corrected.xlsx", overwrite = TRUE)
+  cat("\nExported Table3_Final_Formatted_Corrected.xlsx\n")
+  cat("- Exact column order as specified\n")
+  cat("- 24 columns total:\n")
+  cat("  1. Period\n")
+  cat("  2-5. γ̂₀, γ̂₁, γ̂₂, γ̂₃\n")
+  cat("  6. t(γ̂₀-Rf)\n")
+  cat("  7-10. s(γ̂₀), s(γ̂₁), s(γ̂₂), s(γ̂₃)\n")
+  cat("  11-14. ρ̂₀(γ̂₀), ρ̂₀(γ̂₁), ρ̂₀(γ̂₂), ρ̂₀(γ̂₃)\n")
+  cat("  15-18. ρ̂ₘ(γ̂₀), ρ̂ₘ(γ̂₁), ρ̂ₘ(γ̂₂), ρ̂ₘ(γ̂₃)\n")
+  cat("  19-22. t(γ̂₀), t(γ̂₁), t(γ̂₂), t(γ̂₃)\n")
+  cat("  23-24. r̄², s(r̄²)\n")
+  cat("- All values with 4 decimals\n\n")
 }
 
-setColWidths(wb, 1, cols = 1:20, widths = "auto")
-setColWidths(wb, 1, cols = 1, widths = 12)
-saveWorkbook(wb, "Fama_MacBeth_Table3_Replication.xlsx", overwrite = TRUE)
-
-cat("\n\n✅ Successfully exported formatted results to 'Fama_MacBeth_Table3_Replication.xlsx'\n")
+# Run the corrected export function
+export_table3_final_corrected(table3_full) 
