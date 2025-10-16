@@ -328,22 +328,24 @@ calc_table3_stats <- function(df, model_suffix) {
       rho_0 = rho_0
     )
     
-    # Add t(γ̂₀ - Rf) test for gamma 0
+    # Add mean(γ̂₀ - Rf) and t(γ̂₀ - Rf) tests for gamma 0
     if (include_rf_test && "Rf" %in% names(df)) {
       g0_clean <- vals_clean
       rf_clean <- df$Rf[is.finite(df[[g0_col]])]
       diff <- g0_clean - rf_clean
-      if (length(diff) > 0) {
+      if (length(diff) > 1) { # Need more than 1 observation for sd()
         mn_diff <- mean(diff, na.rm = TRUE)
         sd_diff <- sd(diff, na.rm = TRUE)
+        result$mean_g0_minus_rf <- mn_diff
         result$t_g0_minus_rf <- mn_diff / (sd_diff / sqrt(length(diff)))
       } else {
+        result$mean_g0_minus_rf <- NA
         result$t_g0_minus_rf <- NA
       }
     } else if (include_rf_test) {
+      result$mean_g0_minus_rf <- NA
       result$t_g0_minus_rf <- NA
     }
-    
     return(result)
   }
   
@@ -763,7 +765,7 @@ export_table3_corrected <- function(table3_full) {
   full_header <- c(
     "Period",
     "γ̂₀", "γ̂₁", "γ̂₂", "γ̂₃",
-    "t(γ̂₀-Rf)",
+    "γ̄₀ - R̄f",
     "s(γ̂₀)", "s(γ̂₁)", "s(γ̂₂)", "s(γ̂₃)",
     "ρ̂₀(γ̂₀-Rf)", "ρ̂ₘ(γ̂₁)", "ρ̂₀(γ̂₂)", "ρ̂₀(γ̂₃)",
     "t(γ̂₀)", "t(γ̂₁)", "t(γ̂₂)", "t(γ̂₃)",
@@ -831,7 +833,7 @@ export_table3_corrected <- function(table3_full) {
       if (nrow(g3) > 0) row_data[5] <- fmt(g3$mean[1])
       
       # Column 6: t(γ̂₀-Rf) - FIRST occurrence
-      if (nrow(g0) > 0) row_data[6] <- fmt(g0$t_g0_minus_rf[1])
+      if (nrow(g0) > 0) row_data[6] <- fmt(g0$mean_g0_minus_rf[1])
       
       # Column 7-10: s(γ̂₀), s(γ̂₁), s(γ̂₂), s(γ̂₃) (standard deviations)
       if (nrow(g0) > 0) row_data[7] <- fmt(g0$sd[1])
