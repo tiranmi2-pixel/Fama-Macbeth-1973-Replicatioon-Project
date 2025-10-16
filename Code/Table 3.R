@@ -449,7 +449,7 @@ table3_full <- bind_rows(table3_list)
 
 
 #======================================================
-# CREATE EXACT TABLE 3 FORMAT (21 columns per period)
+# CREATE TABLE 3 FORMAT 
 #======================================================
 
 create_table3_exact <- function(table3_full) {
@@ -505,9 +505,18 @@ table3_formatted <- create_table3_exact(table3_full)
 #======================================================
 # PRINT TABLE 3 IN EXACT PAPER FORMAT
 #======================================================
+library(dplyr)
 
-print_table3_paper <- function(table3_formatted) {
-  
+#' Prints a cleanly formatted summary table to the console, styled after
+#' Fama-MacBeth (1973), Table 3.
+#'
+#' This function handles wide tables by splitting them into two vertical parts
+#' for each panel, ensuring readability in any console width without wrapping.
+#'
+#' @param table3_full A dataframe containing the summary statistics.
+print_table3_console_format <- function(table3_full) {
+  # These are the titles for each of the four models we're testing, exactly
+  # as they appear in the original Fama & MacBeth paper.
   panel_titles <- c(
     "A" = "PANEL A: Rₚₜ = γ₀ₜ + γ₁ₜβₚ + ηₚₜ",
     "B" = "PANEL B: Rₚₜ = γ₀ₜ + γ₁ₜβₚ + γ₂ₜβₚ² + ηₚₜ",
@@ -515,231 +524,115 @@ print_table3_paper <- function(table3_formatted) {
     "D" = "PANEL D: Rₚₜ = γ₀ₜ + γ₁ₜβₚ + γ₂ₜβₚ² + γ₃ₜs̄ₚ(εᵢ) + ηₚₜ"
   )
   
-  cat("\n")
-  cat(rep("=", 180), "\n", sep = "")
-  cat("TABLE 3\n")
-  cat("Risk, Return, and Equilibrium: Empirical Tests\n")
-  cat(rep("=", 180), "\n\n", sep = "")
+  # We need to make sure the periods are always printed in the same order
+  # as the original paper, so we define that order here.
+  periods_ordered <- c("1935-6/68", "1935-45", "1946-55", "1956-6/68", "1935-40",
+                       "1941-45", "1946-50", "1951-55", "1956-60", "1961-6/68")
   
+  # This vector defines all 21 column headers for the full table.
+  headers <- c("Period", "γ̂₀", "γ̂₁", "γ̂₂", "γ̂₃", "γ̄₀-R̄f", "s(γ̂₀)", "s(γ̂₁)",
+               "s(γ̂₂)", "s(γ̂₃)", "ρ̂₀(γ̂₀-Rf)", "ρ̂ₘ(γ̂₁)", "ρ̂₀(γ̂₂)", "ρ̂₀(γ̂₃)",
+               "t(γ̂₀)", "t(γ̂₁)", "t(γ̂₂)", "t(γ̂₃)", "t(γ̂₀-Rf)", "r̄²", "s(r̄²)")
+  
+  # Because the full table is too wide for most consoles, we'll split it
+  # into two parts to make it readable.
+  split_point <- 10
+  headers1 <- headers[1:split_point]
+  headers2 <- c(headers[1], headers[(split_point + 1):length(headers)])
+  col_width <- 9
+  
+  # This is a small helper function to format our numbers. If a value is missing
+  # or not a number, it will print a blank space instead of "NA".
+  format_num <- function(val, width, digits) {
+    if (length(val) != 1 || !is.finite(val)) {
+      return(sprintf("%*s", width, ""))
+    }
+    sprintf(paste0("%", width, ".", digits, "f"), val)
+  }
+  
+  # Printing the main table structure.
+  cat("\n")
+  cat(rep("=", 120), "\n", sep = "")
+  cat("TABLE 3 - Risk, Return, and Equilibrium: Empirical Tests\n")
+  cat(rep("=", 120), "\n\n", sep = "")
+  
+  # This is the main loop. It will go through each panel (A, B, C, D)
+  # and print the formatted tables.
   for (panel_letter in c("A", "B", "C", "D")) {
-    
-    cat("\n", rep("-", 180), "\n", sep = "")
     cat(panel_titles[panel_letter], "\n")
-    cat(rep("-", 180), "\n\n", sep = "")
+    panel_data <- table3_full %>% filter(Panel == panel_letter)
     
-    # PERIODS 1-5
-    cat("PERIODS\n")
-    cat(sprintf("%-15s", " "))
-    for (i in 1:5) {
-      cat(sprintf("%20s", i))
+    # --- Print First Half of the Table ---
+    width1 <- 12 + (length(headers1) - 1) * col_width
+    cat(rep("-", width1), "\n", sep = "")
+    h_line1 <- format(headers1[1], width = 12, justify = "left")
+    for (h in headers1[-1]) h_line1 <- paste0(h_line1, format(h, width = col_width, justify = "right"))
+    cat(h_line1, "\n")
+    cat(rep("-", width1), "\n", sep = "")
+    
+    # Now we loop through each time period and print the data for the first
+    # set of columns.
+    for (period in periods_ordered) {
+      g0 <- panel_data %>% filter(Variable == "γ̂₀", Period == period)
+      g1 <- panel_data %>% filter(Variable == "γ̂₁", Period == period)
+      g2 <- panel_data %>% filter(Variable == "γ̂₂", Period == period)
+      g3 <- panel_data %>% filter(Variable == "γ̂₃", Period == period)
+      cat(sprintf("%-12s", period))
+      cat(format_num(g0$mean[1], col_width, 4))
+      cat(format_num(g1$mean[1], col_width, 4))
+      cat(format_num(g2$mean[1], col_width, 4))
+      cat(format_num(g3$mean[1], col_width, 4))
+      cat(format_num(g0$mean_g0_minus_rf[1], col_width, 4))
+      cat(format_num(g0$sd[1], col_width, 4))
+      cat(format_num(g1$sd[1], col_width, 4))
+      cat(format_num(g2$sd[1], col_width, 4))
+      cat(format_num(g3$sd[1], col_width, 4))
+      cat("\n")
     }
     cat("\n")
-    cat(sprintf("%-15s", " "))
-    periods_1_5 <- c("1935-6/68", "1935-45", "1946-55", "1956-6/68", "1935-40")
-    for (p in periods_1_5) {
-      cat(sprintf("%20s", p))
+    
+    # --- Print Second Half of the Table ---
+    width2 <- 12 + (length(headers2) - 1) * col_width
+    cat(rep("-", width2), "\n", sep = "")
+    h_line2 <- format(headers2[1], width = 12, justify = "left")
+    for (h in headers2[-1]) h_line2 <- paste0(h_line2, format(h, width = col_width, justify = "right"))
+    cat(h_line2, "\n")
+    cat(rep("-", width2), "\n", sep = "")
+    
+    # And here we loop through the same time periods again to print the
+    # remaining columns.
+    for (period in periods_ordered) {
+      g0 <- panel_data %>% filter(Variable == "γ̂₀", Period == period)
+      g1 <- panel_data %>% filter(Variable == "γ̂₁", Period == period)
+      g2 <- panel_data %>% filter(Variable == "γ̂₂", Period == period)
+      g3 <- panel_data %>% filter(Variable == "γ̂₃", Period == period)
+      r2 <- panel_data %>% filter(Variable == "r̄²", Period == period)
+      cat(sprintf("%-12s", period))
+      cat(format_num(g0$rho_0[1], col_width, 4))
+      cat(format_num(g1$rho_m[1], col_width, 4))
+      cat(format_num(g2$rho_0[1], col_width, 4))
+      cat(format_num(g3$rho_0[1], col_width, 4))
+      cat(format_num(g0$t_stat[1], col_width, 2))
+      cat(format_num(g1$t_stat[1], col_width, 2))
+      cat(format_num(g2$t_stat[1], col_width, 2))
+      cat(format_num(g3$t_stat[1], col_width, 2))
+      cat(format_num(g0$t_g0_minus_rf[1], col_width, 2))
+      cat(format_num(r2$mean[1], col_width, 4))
+      cat(format_num(r2$sd[1], col_width, 4))
+      cat("\n")
     }
-    cat("\n\n")
-    
-    data_1_5 <- table3_formatted[[paste0("Panel_", panel_letter, "_Periods_1_5")]]
-    
-    if (!is.null(data_1_5) && nrow(data_1_5) > 0) {
-      
-      # Get unique periods and variables
-      periods <- levels(data_1_5$Period)
-      variables <- unique(data_1_5$Variable)
-      
-      # Print each statistic row
-      for (var in variables) {
-        
-        # Mean row
-        cat(sprintf("%-15s", var))
-        for (p in periods) {
-          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(mean)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.4f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # SD row
-        cat(sprintf("%-15s", "s(γ̂ⱼ)"))
-        for (p in periods) {
-          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(sd)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.4f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # t-stat row
-        cat(sprintf("%-15s", "t(γ̂ⱼ)"))
-        for (p in periods) {
-          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(t_stat)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.2f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # rho_m row
-        cat(sprintf("%-15s", "ρ̂ₘ(γ̂ⱼ)"))
-        for (p in periods) {
-          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(rho_m)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.3f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # rho_0 row
-        cat(sprintf("%-15s", "ρ̂₀(γ̂ⱼ)"))
-        for (p in periods) {
-          val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(rho_0)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.3f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # t(γ̂₀ - Rf) row for γ̂₀ only
-        if (var == "γ̂₀") {
-          cat(sprintf("%-15s", "t(γ̂₀-Rf)"))
-          for (p in periods) {
-            val <- data_1_5 %>% filter(Period == p, Variable == var) %>% pull(t_g0_minus_rf)
-            if (length(val) > 0 && is.finite(val)) {
-              cat(sprintf("%20.2f", val))
-            } else {
-              cat(sprintf("%20s", ""))
-            }
-          }
-          cat("\n")
-        }
-        
-        cat("\n")
-      }
-    }
-    
-    cat("\n")
-    
-    # PERIODS 6-10
-    cat("PERIODS\n")
-    cat(sprintf("%-15s", " "))
-    for (i in 6:10) {
-      cat(sprintf("%20s", i))
-    }
-    cat("\n")
-    cat(sprintf("%-15s", " "))
-    periods_6_10 <- c("1941-45", "1946-50", "1951-55", "1956-60", "1961-6/68")
-    for (p in periods_6_10) {
-      cat(sprintf("%20s", p))
-    }
-    cat("\n\n")
-    
-    data_6_10 <- table3_formatted[[paste0("Panel_", panel_letter, "_Periods_6_10")]]
-    
-    if (!is.null(data_6_10) && nrow(data_6_10) > 0) {
-      
-      periods <- levels(data_6_10$Period)
-      variables <- unique(data_6_10$Variable)
-      
-      for (var in variables) {
-        
-        # Mean row
-        cat(sprintf("%-15s", var))
-        for (p in periods) {
-          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(mean)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.4f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # SD row
-        cat(sprintf("%-15s", "s(γ̂ⱼ)"))
-        for (p in periods) {
-          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(sd)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.4f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # t-stat row
-        cat(sprintf("%-15s", "t(γ̂ⱼ)"))
-        for (p in periods) {
-          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(t_stat)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.2f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # rho_m row
-        cat(sprintf("%-15s", "ρ̂ₘ(γ̂ⱼ)"))
-        for (p in periods) {
-          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(rho_m)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.3f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # rho_0 row
-        cat(sprintf("%-15s", "ρ̂₀(γ̂ⱼ)"))
-        for (p in periods) {
-          val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(rho_0)
-          if (length(val) > 0 && is.finite(val)) {
-            cat(sprintf("%20.3f", val))
-          } else {
-            cat(sprintf("%20s", ""))
-          }
-        }
-        cat("\n")
-        
-        # t(γ̂₀ - Rf) row for γ̂₀ only
-        if (var == "γ̂₀") {
-          cat(sprintf("%-15s", "t(γ̂₀-Rf)"))
-          for (p in periods) {
-            val <- data_6_10 %>% filter(Period == p, Variable == var) %>% pull(t_g0_minus_rf)
-            if (length(val) > 0 && is.finite(val)) {
-              cat(sprintf("%20.2f", val))
-            } else {
-              cat(sprintf("%20s", ""))
-            }
-          }
-          cat("\n")
-        }
-        
-        cat("\n")
-      }
-    }
-    
     cat("\n\n")
   }
 }
 
-# Print the table
-print_table3_paper(table3_formatted)
 
+# This part just checks if our 'table3_full' data frame exists and then
+# runs the main print function.
+if (exists("table3_full")) {
+  print_table3_console_format(table3_full)
+} else {
+  cat("Please make sure the 'table3_full' dataframe is loaded.\n")
+}
 
 #======================================================
 # Export to Excel with proper formatting 
