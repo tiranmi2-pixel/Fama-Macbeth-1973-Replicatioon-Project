@@ -125,7 +125,7 @@ ff_rf <- DBI::dbGetQuery(wrds, qry_rf) %>%
 mkt_rf <- fisher_eqw %>%
   inner_join(ff_rf, by = "month") %>%
   mutate(date = as.Date(month)) %>%
-  select(date, n_nyse, mkt_eqw_ret, rf_m) %>%
+  select(date, month, n_nyse, mkt_eqw_ret, rf_m) %>%
   arrange(date)
 
 # --- Disconnect from WRDS ---
