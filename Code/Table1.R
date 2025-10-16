@@ -142,10 +142,44 @@ table1_panelA <- make_panel(table1_raw, 1:5, show_period_numbers_in_row = TRUE)
 table1_panelB <- make_panel(table1_raw, 6:9, show_period_numbers_in_row = TRUE)
 
 
+# ---------- Export for Table 1 (Panels A & B) ----------
+# Create a gt table and export it ---
+export_table1 <- function(tbl, title) {
+  gt_tbl <- tbl %>%
+    dplyr::slice(-1) %>%                 # drop the "PERIODS / numbers" row
+    gt::gt() %>%
+    gt::tab_header(title = gt::md(paste0("**", title, "**"))) %>%
+    gt::sub_missing(columns = gt::everything(), missing_text = "") %>%  # use sub_missing()
+    gt::tab_options(
+      table.font.size = gt::px(12),
+      table.align = "center",
+      data_row.padding = gt::px(2)
+    )
+  gt_tbl
+}
 
-print(as.data.frame(table1_panelA), row.names = FALSE)
-print(as.data.frame(table1_panelB), row.names = FALSE)
+tbl1A <- export_table1(
+  table1_panelA,
+  title = "Table 1. Portfolio formation, estimation, and testing periods"
+)
+tbl1B <- export_table1(
+  table1_panelB,
+  title = "Table 1. (Continued)"
+)
 
+# Save to PDF
+gt::gtsave(tbl1A, "Table1.pdf")
+gt::gtsave(tbl1B, "Table1 (continued).pdf")
 
+### Export for Excel file
+install.packages("writexl")
+library(writexl)
 
+write_xlsx(
+  list(
+    "Table1_PanelA_1-5" = table1_panelA,  
+    "Table1_PanelB_6-9" = table1_panelB  
+  ),
+  path = "Table1_FamaMacBeth_Corrected.xlsx"
+)
 

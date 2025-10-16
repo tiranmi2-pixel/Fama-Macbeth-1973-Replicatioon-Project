@@ -287,14 +287,9 @@ table2_master_11to20 <- make_master_table(
 )
 
 # Render with a single bold heading
-export_table2_corrected(table2_master_1to10,
-                        title = "Table 2. Sample Statistics For Four Selected Estimation Periods")
-export_table2_corrected(table2_master_11to20,
-                        title = "Table 2. (Continued)")
-
 
 export_table2_corrected <- function(df, file = NULL,
-                                    title = "SAMPLE STATISTICS FOR FOUR SELECTED ESTIMATION PERIODS") {
+                                    title = "Table 2. Sample Statistics For Four Selected Estimation Periods") {
   gt_tbl <- df |>
     gt::gt() |>
     gt::tab_header(title = gt::md(paste0("**", title, "**"))) |>
@@ -314,8 +309,8 @@ export_table2_corrected <- function(df, file = NULL,
 }
 
 # Save to PDF
-export_table2_corrected(table2_master_1to10, file = "Table 2.pdf")
-export_table2_corrected(table2_master_11to20, file = "Table 2_(continued).pdf")
+export_table2_corrected(table2_master_1to10, file = "Table2.pdf")
+export_table2_corrected(table2_master_11to20, file = "Table2 (continued).pdf")
 
 ### Export for Excel file
 
@@ -324,6 +319,6 @@ write_xlsx(
     "Table2_PanelA_1-10"  = table2_master_1to10,
     "Table2_PanelB_11-20" = table2_master_11to20
   ),
-  path = "Table 2.xlsx"
+  path = "Table 2_FamaMacBeth_Corrected.xlsx"
 )
 
