@@ -160,7 +160,14 @@ process_triplet <- function(formation_start, formation_end,
     # F&M updated their beta estimates each year, hence we follow the same.
     if (month(as.Date(t_month)) == 1 || t_idx == 1) {
       update_end <- if(t_idx == 1) ym_est[length(ym_est)] else t_month - 1/12
-      ym_update <- seq(ym_est[1], update_end, by = 1/12)
+      
+      # Define the rolling window length (e.g., 60 months for a 5-year window)
+      window_n_months <- length(ym_est) 
+      # Calculate the new start date for the rolling window
+      update_start <- update_end - (window_n_months - 1) / 12
+      
+      # Create the sequence for the rolling period
+      ym_update <- seq(update_start, update_end, by = 1/12)
       
       sec_est_current <- stock_m %>%
         filter(permno %in% membership$permno, month %in% ym_update) %>%
@@ -737,7 +744,7 @@ print_table3_paper(table3_formatted)
 #======================================================
 # Export to Excel with proper formatting 
 #======================================================
-
+options(scipen = 999)
 library(openxlsx)
 library(dplyr)
 
