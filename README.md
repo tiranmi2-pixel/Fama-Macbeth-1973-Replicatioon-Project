@@ -33,7 +33,6 @@ install.packages(c("DBI", "RPostgres", "broom", "dplyr", "fredr", "gt",
                    "lubridate", "openxlsx", "purrr", "readr", "stringr", 
                    "tibble", "tidyr", "writexl", "zoo"))
 ```
-```
 
 
 
