@@ -22,7 +22,7 @@ Specifically, the following datasets are used:
 
 The data extraction script (`Code for A3.r`) is configured to pull NYSE common stocks (share codes 10 and 11) for the period from January 1926 to June 1968.
 ### Repository Structure
-
+```
 Fama-Macbeth-1973-Replication-Project/
 ├── Code/
 │   ├── Code for A3.r
@@ -36,7 +36,7 @@ Fama-Macbeth-1973-Replication-Project/
     ├── Table1_FamaMacBeth_Corrected.xlsx
     ├── Table 2_FamaMacBeth_Corrected.xlsx
     └── Table3_FamaMacBeth_Corrected.xlsx
-
+```
 ##  Setup and Dependencies
 
 ### R Packages
