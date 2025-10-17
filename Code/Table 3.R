@@ -85,7 +85,7 @@ ym_seq <- function(y1, y2, m1 = 1, m2 = 12) {
 }
 
 #======================================================
-# Core Function: Process one triplet (Formation, Estimation, Testing)
+# Core Function: Process one of the sequence(Formation, Estimation, Testing)
 # Why three separate time periods?
 # 1. Formation: Sort stocks by beta 
 # 2. Estimation: Calculate fresh betas using NEW data (avoids look-ahead bias)
