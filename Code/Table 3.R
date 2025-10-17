@@ -18,10 +18,19 @@ library(purrr)
 #      which is how we tackle the ambiguity of what "common stock" means.
 # 2. `mkt_rf`: Contains the equal-weighted market return and the risk-free rate.
 
+
+# Important choices we made:
+# - Only ordinary common shares (shrcd 10 or 11) 
+# - Returns already include delisting adjustments 
+
+
+
+
 # --- Market data with risk-free rate ---
 # Getting market data ready for joining.
 mkt_by_month <- mkt_rf %>%
   transmute(month = as.yearmon(date), Rm = mkt_eqw_ret, Rf = rf_m)
+
 
 # --- Stock-month panel ---
 # Combine our individual stock returns with the market data for each month.
@@ -77,6 +86,10 @@ ym_seq <- function(y1, y2, m1 = 1, m2 = 12) {
 
 #======================================================
 # Core Function: Process one triplet (Formation, Estimation, Testing)
+# Why three separate time periods?
+# 1. Formation: Sort stocks by beta 
+# 2. Estimation: Calculate fresh betas using NEW data (avoids look-ahead bias)
+# 3. Testing: See if high-beta portfolios actually earn higher returns
 #======================================================
 
 # This is the main section of the entire replication. It takes the start and end dates
@@ -118,6 +131,8 @@ process_triplet <- function(formation_start, formation_end,
   ## STEP 1: FORMING THE PORTFOLIOS ##
   # First, we calculate betas for all eligible stocks using the 'formation period' data.
   # Then we rank them from lowest to highest beta and group them into 20 portfolios.
+  # Portfolio 1 = lowest betas (defensive stocks)
+  # Portfolio 20 = highest betas (aggressive stocks)
   #=====================================================================================
   betas_form <- stock_m %>%
     filter(permno %in% universe, month %in% ym_form) %>%
