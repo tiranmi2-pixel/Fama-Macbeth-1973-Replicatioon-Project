@@ -269,7 +269,7 @@ process_triplet <- function(formation_start, formation_end,
 }
 
 #======================================================
-# Run all 9 triplets
+# Run all 9 iterations
 # Why 9 times? To check robustness across different time periods.
 # If CAPM works, it should work consistently, not just in one era.
 #======================================================
