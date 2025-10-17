@@ -1,6 +1,6 @@
 # Replication: "Risk, Return, and Equilibrium: Empirical Tests" (Fama & MacBeth, 1973)
 
-This repository provides R scripts that fully replicate the 1973 study by Eugene Fama and James MacBeth in the Journal of Political Economy. The project downloads and cleans the required CRSP data, forms portfolios, and runs the two pass cross sectional regressions to reproduce Tables 1, 2, and 3 from the original paper.
+This repository contains the R scripts to fully replicate the 1973 study by Eugene Fama and James MacBeth, published in the Journal of Political Economy. The project downloads and cleans the necessary CRSP data, forms portfolios, and runs the two-pass cross-sectional regressions to reproduce Tables 1, 2, and 3 from the original paper.
 
 ##  Abstract
 
