@@ -128,7 +128,7 @@ process_triplet <- function(formation_start, formation_end,
     return(NULL)
   }
   #======================================================================================  
-  ## STEP 1: FORMING THE PORTFOLIOS ##
+  ## Processing STEP 1: FORMING THE PORTFOLIOS ##
   # First, we calculate betas for all eligible stocks using the 'formation period' data.
   # Then we rank them from lowest to highest beta and group them into 20 portfolios.
   # Portfolio 1 = lowest betas (defensive stocks)
@@ -148,7 +148,7 @@ process_triplet <- function(formation_start, formation_end,
     mutate(port = rep(1:20, times = sizes)) %>%
     select(permno, port)
   #=========================================================================
-  ## STEP 2: ESTIMATING PORTFOLIO RISK ##
+  ## Processing STEP 2: ESTIMATING PORTFOLIO RISK ##
   # To avoid statistical bias, we use a totally separate 'estimation period'
   # to get cleaner estimates of risk for the 20 portfolios we just made.
   #=========================================================================
@@ -165,7 +165,7 @@ process_triplet <- function(formation_start, formation_end,
   sec_est_current <- sec_est_initial
   
   #===================================================================================
-  ## STEP 3: RUNNING THE MONTHLY REGRESSIONS ##
+  ## Processing STEP 3: RUNNING THE MONTHLY REGRESSIONS ##
   # Now for the main analysis. We loop through every single month in the 'testing period'
   # and run a cross-sectional regression.
   #=====================================================================================
@@ -237,6 +237,10 @@ process_triplet <- function(formation_start, formation_end,
     
     # Finally, run the four regression models specified in the paper.
     # The coefficients from these models are our 'gammas'.
+    # A: Simple CAPM (return vs beta only)
+    # B: Add beta² (test for non-linearity)
+    # C: Add idiosyncratic risk (does non-systematic risk matter?)
+    # D: All variables together.
     tryCatch({
       mod_a <- lm(Rp ~ beta_p, data = reg_data)
       mod_b <- lm(Rp ~ beta_p + beta_sq_p, data = reg_data)
@@ -266,6 +270,8 @@ process_triplet <- function(formation_start, formation_end,
 
 #======================================================
 # Run all 9 triplets
+# Why 9 times? To check robustness across different time periods.
+# If CAPM works, it should work consistently, not just in one era.
 #======================================================
 
 # The paper repeats the entire process 9 times on overlapping periods to
