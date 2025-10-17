@@ -1,6 +1,6 @@
 # Replication: "Risk, Return, and Equilibrium: Empirical Tests" (Fama & MacBeth, 1973)
 
-This repository contains the R scripts to fully replicate the seminal 1973 study by Eugene Fama and James MacBeth, published in the Journal of Political Economy. The project downloads and cleans the necessary CRSP data, forms portfolios, and runs the two-pass cross-sectional regressions to reproduce Tables 1, 2, and 3 from the original paper.
+This repository contains the R scripts to fully replicate the  1973 study by Eugene Fama and James MacBeth, published in the Journal of Political Economy. The project downloads and cleans the necessary CRSP data, forms portfolios, and runs the two-pass cross-sectional regressions to reproduce Tables 1, 2, and 3 from the original paper.
 
 ##  Abstract
 
@@ -26,16 +26,20 @@ The data extraction script (`Code for A3.r`) is configured to pull NYSE common s
 
 ### R Packages
 
-The project requires several R packages for data manipulation, database connection, and table generation. The main data preparation script includes a command to install them:
+The project requires several R packages for data manipulation, database connection, and table generation. The replicators suggest running the below code to avoid  any unexpected errors during the replication.
 
-install.packages(c("RPostgres", "dplyr", "tidyr", "lubridate", "zoo",
-"stringr", "readr", "gt", "openxlsx", "writexl"))
+```
+install.packages(c("DBI", "RPostgres", "broom", "dplyr", "fredr", "gt", 
+                   "lubridate", "openxlsx", "purrr", "readr", "stringr", 
+                   "tibble", "tidyr", "writexl", "zoo"))
+```
+```
+
 
 
 ### WRDS Connection
 
-You must have valid WRDS credentials. The script `Code for A3.r` connects to the WRDS PostgreSQL database. You will need to enter your username when prompted or configure a `.pgpass` file for seamless authentication.
-
+You must have valid WRDS credentials. The script `Code for A3.r` connects to the WRDS PostgreSQL database. You will need to amend username  included in wrds code block in the file to establish the connection.
 ##  How to Run the Replication
 
 ### Step 1: Environment Setup
@@ -51,7 +55,7 @@ The scripts must be executed sequentially, as each subsequent script depends on 
 1. **Run `Code for A3.r`**: This script connects to WRDS, downloads all necessary data, cleans it, and creates the foundational data frames (`crsp_clean` and `mkt_rf`) in your R environment
 2. **Run `Table1.R`**: This script uses the `crsp_clean` object to generate the statistics for Table 1
 3. **Run `Table2.R`**: This script also depends on `crsp_clean` and generates the portfolio statistics for Table 2
-4. **Run `Table 3.R`**: This is the final and most intensive script. It uses `crsp_clean` and `mkt_rf` to perform the full Fama-MacBeth two-pass regression and generates the results for Table 3
+4. **Run `Table 3.R`**: This is the final and most import script. It uses `crsp_clean` and `mkt_rf` to perform the full Fama-MacBeth two-pass regression and generates the results for Table 3
 
 ##  Script Descriptions
 
@@ -112,9 +116,13 @@ After running all scripts successfully, the following files will be generated in
 - `Table3_FamaMacBeth_Corrected.xlsx`
 
 ##  License
+This code is freely available for anyone to use, replicate, and modify for research, educational, or commercial purposes under the MIT License. 
 
-This project is licensed under the MIT License.
+**If you use this replication in your work, please provide appropriate credit by:**
 
-## 📚 Citation
+- Citing the original Fama & MacBeth (1973) paper
+- Acknowledging this replication repository in your work.
+
+## Citation
 
 Fama, E. F., & MacBeth, J. D. (1973). Risk, Return, and Equilibrium: Empirical Tests. *Journal of Political Economy*, 81(3), 607–636. [https://doi.org/10.1086/260061](https://doi.org/10.1086/260061)
