@@ -21,6 +21,21 @@ Specifically, the following datasets are used:
 - `ff.factors_monthly`: Monthly risk-free rates
 
 The data extraction script (`Code for A3.r`) is configured to pull NYSE common stocks (share codes 10 and 11) for the period from January 1926 to June 1968.
+### Repository Structure
+
+Fama-Macbeth-1973-Replication-Project/
+├── Code/
+│   ├── Code for A3.r
+│   ├── Table1.R
+│   ├── Table2.R
+│   └── Table 3.R
+├── Report/
+│   └── Assessment 3_MAF900_Group Replication Project.pdf
+└── Output/
+    ├── Fama_MacBeth_Table3_Output.pdf
+    ├── Table1_FamaMacBeth_Corrected.xlsx
+    ├── Table 2_FamaMacBeth_Corrected.xlsx
+    └── Table3_FamaMacBeth_Corrected.xlsx
 
 ##  Setup and Dependencies
 
